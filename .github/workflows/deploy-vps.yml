@@ -71,6 +71,8 @@ jobs:
           echo "Image transferred to /tmp/omni-image.tar.gz"
 
       - name: Deploy via SSH (image only, data untouched)
+        env:
+          DEPLOY_TAG: ${{ env.DEPLOY_TAG }}
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -79,8 +81,7 @@ jobs:
           port: 22
           timeout: 5m
           command_timeout: 20m
-          env:
-            DEPLOY_TAG: ${{ env.DEPLOY_TAG }}
+          envs: DEPLOY_TAG
           script: |
             echo "Deploying $DEPLOY_TAG"
             echo "=== 1. Restore image into local Docker store and minikube's containerd ==="
