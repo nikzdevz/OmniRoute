@@ -112,12 +112,11 @@ jobs:
 
             echo "=== 5. Internal health check (node inside pod) ==="
             kubectl -n omniroute exec deploy/omniroute -- node -e "
-              fetch('http://127.0.0.1:20128/api/health')
-                .then(r => r.text()).then(t => console.log('internal:', t)).catch(e => console.error('FAILED:', e.message));
-              // no exit needed, this is inside a ephemeral check"
+              fetch('http://127.0.0.1:20128/api/monitoring/health')
+                .then(r => r.text()).then(t => console.log('internal:', t)).catch(e => console.error('FAILED:', e.message));"
 
             echo "=== 6. Public health check (via domain/ingress) ==="
-            curl -sk --max-time 30 https://omni.kraftstack.in/api/health || echo "### public health FAILED ###"
+            curl -sk --max-time 30 https://omni.kraftstack.in/api/monitoring/health | head -c 200 || echo "### public health FAILED ###"
 
             echo "=== 7. Final pod state ==="
             kubectl -n omniroute get pods -o wide
