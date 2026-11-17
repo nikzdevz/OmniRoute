@@ -66,11 +66,17 @@ jobs:
 
       - name: Transfer image to server
         env:
+          # Raw multi-line private key. Never let it touch shell expansion:
+          # printenv writes it to a file byte-for-byte.
           SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
         run: |
-          chmod 400 "$SSH_KEY"
-          scp -o BatchMode=yes -o StrictHostKeyChecking=no -i "$SSH_KEY" \
+          umask 077
+          printenv SSH_KEY > /tmp/omni-deploy.key
+          chmod 400 /tmp/omni-deploy.key
+          [ -s /tmp/omni-deploy.key ] || { echo "key file empty"; exit 1; }
+          scp -i /tmp/omni-deploy.key -o BatchMode=yes -o UserKnownHostsFile=.ssh/known_hosts \
             deploy/omni-image.tar.gz root@${{ secrets.VPS_HOST }}:/tmp/
+          rm -f /tmp/omni-deploy.key
           echo "Image transferred to /tmp/omni-image.tar.gz"
 
       - name: Deploy via SSH (image only, data untouched)
