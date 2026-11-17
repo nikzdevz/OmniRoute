@@ -292,3 +292,129 @@ export function extractComboTestResponseText(
 
   return "";
 }
+
+// ── Minimal real-generation probe ───────────────────────────────────────────
+
+const PROBE_MAX_TOKENS = 64;
+const PROBE_TIMEOUT_MS = 15_000;
+const COMBO_TEST_TIMEOUT_MS = 20_000;
+
+function randomUUID(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+export interface ComboModelProbeOptions {
+  /** Caller-provided cancellation (e.g. scheduler shutdown). */
+  signal?: AbortSignal;
+  /** Background probe mode: smaller generation budget + shorter timeout. */
+  probe?: boolean;
+}
+
+/**
+ * Send a minimal but REAL chat completion for one model through the internal
+ * /v1 pipeline and measure the round-trip latency. Shared by the dashboard's
+ * combo test action and the responsive-priority background scheduler.
+ *
+ * The request carries `X-Internal-Test` so it never involves user auth, and
+ * `X-OmniRoute-No-Cache` so it cannot be satisfied from a response cache.
+ */
+export async function testComboModel(
+  modelStr: string,
+  internalUrl: string,
+  options: ComboModelProbeOptions = {}
+) {
+  const { signal, probe } = options;
+  const startTime = Date.now();
+
+  const controller = new AbortController();
+  const onExternalAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", onExternalAbort, { once: true });
+  }
+  const timeoutMs = probe ? PROBE_TIMEOUT_MS : COMBO_TEST_TIMEOUT_MS;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const testBody = probe
+      ? {
+          model: modelStr,
+          messages: [{ role: "user", content: "hi" }],
+          max_tokens: PROBE_MAX_TOKENS,
+          stream: false,
+        }
+      : buildComboTestRequestBody(modelStr);
+
+    const res = await fetch(internalUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // Internal tests use the normal /v1 pipeline but bypass REQUIRE_API_KEY
+        // so admins can test with local session auth.
+        "X-Internal-Test": "combo-health-check",
+        // Force a fresh execution path so combo tests cannot be satisfied by
+        // OmniRoute's semantic cache or other request reuse layers.
+        "X-OmniRoute-No-Cache": "true",
+        "X-Request-Id": `${probe ? "resp-priority-probe" : "combo-test"}-${randomUUID()}`,
+      },
+      body: JSON.stringify(testBody),
+      signal: controller.signal,
+    });
+
+    const latencyMs = Date.now() - startTime;
+
+    if (res.ok) {
+      let responseBody: unknown = null;
+      try {
+        responseBody = await res.json();
+      } catch {
+        responseBody = null;
+      }
+
+      const responseText = extractComboTestResponseText(responseBody);
+      if (!responseText) {
+        return {
+          model: modelStr,
+          status: "error",
+          statusCode: res.status,
+          error: "Provider returned HTTP 200 but no text content.",
+          latencyMs,
+        };
+      }
+
+      return { model: modelStr, status: "ok", latencyMs, responseText };
+    }
+
+    let errorMsg = "";
+    try {
+      const errBody = await res.json();
+      errorMsg = (errBody as any)?.error?.message || (errBody as any)?.error || res.statusText;
+    } catch {
+      errorMsg = res.statusText;
+    }
+
+    return {
+      model: modelStr,
+      status: "error",
+      statusCode: res.status,
+      error: errorMsg,
+      latencyMs,
+    };
+  } catch (error: any) {
+    const latencyMs = Date.now() - startTime;
+    return {
+      model: modelStr,
+      status: "error",
+      error:
+        error?.name === "AbortError"
+          ? `Timeout (${timeoutMs / 1000}s)`
+          : error?.message || "Probe failed",
+      latencyMs,
+    };
+  } finally {
+    clearTimeout(timeout);
+    if (signal) signal.removeEventListener("abort", onExternalAbort);
+  }
+}

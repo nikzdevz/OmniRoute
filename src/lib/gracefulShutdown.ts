@@ -217,9 +217,12 @@ export function requestGracefulShutdown(signal: string): Promise<void> {
 
 /**
  * Initialize graceful shutdown handlers.
- * Should be called once during server startup.
+ *
+ * Background services are stopped when the process shuts down; `stopHooks`
+ * lists extra async stop callbacks (e.g. the responsive-priority probe
+ * scheduler) that run after drain and before cleanup.
  */
-export function initGracefulShutdown(): void {
+export function initGracefulShutdown(stopHooks: Array<() => Promise<void> | void> = []): void {
   const state = getShutdownState();
   globalThis.__omnirouteRequestShutdown ??= requestGracefulShutdown;
   if (state.init) return;
@@ -231,7 +234,14 @@ export function initGracefulShutdown(): void {
   }
 
   const shutdown = (signal: string) => {
-    void globalThis.__omnirouteRequestShutdown?.(signal).then(() => {
+    void globalThis.__omnirouteRequestShutdown?.(signal).then(async () => {
+      for (const stop of stopHooks) {
+        try {
+          await stop();
+        } catch (err) {
+          console.error("[Shutdown] Error during stop hook:", (err as Error).message);
+        }
+      }
       // #13306: on Windows, sql.js's Emscripten WASM build leaves pending libuv
       // async-handle teardown work in flight after a statement has run. Calling
       // process.exit() in the same tick as cleanup() resolving tears the event loop

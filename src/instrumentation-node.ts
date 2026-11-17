@@ -680,7 +680,20 @@ export async function registerNodejs(): Promise<void> {
     await import("@/lib/freeProxyProviders/scheduler");
   }
 
-  initGracefulShutdown();
+  const responsivePriorityStopHook = async () => {
+    try {
+      const { stopResponsivePriorityScheduler } =
+        await import("@omniroute/open-sse/services/responsivePriority.ts");
+      await stopResponsivePriorityScheduler();
+    } catch (err) {
+      console.warn(
+        "[STARTUP] Could not capture stop handler:",
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+  };
+
+  initGracefulShutdown([responsivePriorityStopHook]);
   initApiBridgeServer();
   startSpendBatchWriter();
   registerDefaultGuardrails();
@@ -728,6 +741,16 @@ export async function registerNodejs(): Promise<void> {
     const { initBatchProcessor } = await import("@omniroute/open-sse/services/batchProcessor");
     initBatchProcessor();
     console.log("[STARTUP] Batch processor started");
+
+    try {
+      const { startResponsivePriorityScheduler } =
+        await import("@omniroute/open-sse/services/responsivePriority.ts");
+      startResponsivePriorityScheduler();
+      console.log("[STARTUP] Responsive-priority latency probe scheduler started");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[STARTUP] Could not start responsive-priority scheduler:", msg);
+    }
   }
 
   try {

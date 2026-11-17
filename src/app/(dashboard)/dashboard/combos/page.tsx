@@ -200,6 +200,8 @@ const STRATEGY_DESC_FALLBACK = {
     "Priority-style routing with automatic context handoffs when account rotation happens.",
   "reset-aware":
     "Quota remaining and reset windows decide the order; similar scores rotate round-robin.",
+  "responsive-priority":
+    "Priority routing re-ordered by live measured latency — the fastest healthy model is tried first.",
 };
 
 const STRATEGY_GUIDANCE_FALLBACK = {
@@ -286,6 +288,13 @@ const STRATEGY_GUIDANCE_FALLBACK = {
       "Avoid when you have no TypeSafe API key, or when you need a strict priority schedule that never skips a healthy favorite.",
     example:
       "Example: Opus → mid GPT → small GLM; Jev sends short chats to GLM and keeps Opus for hard coding turns.",
+  },
+  "responsive-priority": {
+    when: "Use when models differ in speed and you want the fastest healthy endpoint tried first.",
+    avoid:
+      "Avoid when you need deterministic ordering or when probing every 30s is undesirable on noisy networks.",
+    example:
+      "Example: Several fast API providers where you always want the lowest-latency one first.",
   },
 };
 
