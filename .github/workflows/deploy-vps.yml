@@ -42,9 +42,12 @@ jobs:
       - name: Build Docker image (build tag + unique deploy tag)
         run: |
           echo "Building $IMG_TAG ($DEPLOY_TAG) at $GITHUB_SHA"
-          docker build --quiet -t $IMG_TAG .
+          # --target runner-base matches the deployed image and skips the
+          # runner-cli stage (line 68 installs npm packages that no longer
+          # exist, which breaks the default full build).
+          docker build --quiet --target runner-base -t $IMG_TAG .
           docker tag $IMG_TAG $DEPLOY_TAG
-          docker images | grep -E "^(omniroute)"
+          docker images | grep -E "^omniroute"
 
       - name: Export image to tarball
         run: |
