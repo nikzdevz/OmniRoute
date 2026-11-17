@@ -36,7 +36,8 @@ export type StrategyOrderingKind =
   | "cache-optimized"
   | "headroom"
   | "quota-weighted"
-  | "quota-share";
+  | "quota-share"
+  | "responsive-priority";
 
 export interface StrategyTraits {
   /** Target-ordering stage run before continuity filters (applyStrategyOrdering / auto). */
@@ -188,6 +189,18 @@ const STRATEGY_TRAIT_OVERRIDES: Record<AnyRoutingStrategyValue, StrategyTraitOve
     protectsFirstTargetFromAffinity: true,
     inflightReservation: "quota-share",
     quotaShareConcurrencySlot: true,
+  },
+  // Responsive-priority: priority semantics re-ordered by live measured latency
+  // (background probe scheduler in services/responsivePriority.ts). Stale or
+  // missing probe data degrades to the operator-declared order.
+  "responsive-priority": {
+    ordering: "responsive-priority",
+    runtimeUnitOrder: "declared",
+    honorsFallbackOnlyTargets: true,
+    stickinessRespectsDeclaredOrder: true,
+    preScreensTargets: true,
+    promptCacheAffinityScope: "model",
+    protectsFirstTargetFromAffinity: true,
   },
 };
 

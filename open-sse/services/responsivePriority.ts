@@ -27,6 +27,7 @@
  */
 
 import { resolveNestedComboModels } from "./combo.ts";
+import type { ComboLike } from "./combo/types.ts";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -161,7 +162,7 @@ export function orderByLatencyHealth(models: string[], now: number = Date.now())
  */
 export interface SchedulerDeps {
   /** Load all combos (defaults to DB). */
-  loadCombos?: () => Promise<any[]>;
+  loadCombos?: () => Promise<ComboLike[]>;
   /** Probe a single model; defaults to the existing combo test machinery. */
   probeModel?: (modelStr: string, signal: AbortSignal) => Promise<number>;
   /** Internal base URL for the default probe (defaults to runtime ports). */
@@ -179,13 +180,15 @@ export interface SchedulerDeps {
  * @param {Array} combos - All combos from the DB.
  * @returns {string[]} Unique model strings.
  */
-export function collectResponsivePriorityModels(combos: any[]): string[] {
+export function collectResponsivePriorityModels(
+  combos: Array<ComboLike | Record<string, unknown>>
+): string[] {
   const all = Array.isArray(combos) ? combos : [];
   const seen = new Set<string>();
 
   for (const combo of all) {
     if (!combo || combo.strategy !== RESPONSIVE_PRIORITY_STRATEGY) continue;
-    const flat = resolveNestedComboModels(combo, all);
+    const flat = resolveNestedComboModels(combo as ComboLike, all as ComboLike[]);
     for (const modelStr of flat) {
       if (typeof modelStr === "string" && modelStr) seen.add(modelStr);
     }
@@ -246,7 +249,7 @@ export async function runProbeTick(deps: SchedulerDeps = {}): Promise<void> {
   const loadCombos =
     deps.loadCombos ||
     (async () => {
-      const { getCombos } = await import("../../src/lib/localDb");
+      const { getCombos } = await import("../../src/lib/db/combos");
       return getCombos();
     });
 
@@ -287,7 +290,7 @@ export async function runProbeTick(deps: SchedulerDeps = {}): Promise<void> {
                 probedAt: now(),
               });
             }
-          } catch (err: any) {
+          } catch (err) {
             // Cancelled ticks leave no sample: routing keeps the last known
             // state instead of penalizing models for a shutdown.
             if (!controller.signal.aborted) {
@@ -335,7 +338,9 @@ export function startResponsivePriorityScheduler(deps: SchedulerDeps = {}): void
   log(`${LOG_PREFIX} probe scheduler started (every ${PROBE_INTERVAL_MS / 1000}s)`);
 
   state.timer = setInterval(() => {
-    runProbeTick(deps).catch((err: any) => log(`${LOG_PREFIX} tick error: ${err?.message || err}`));
+    runProbeTick(deps).catch((err: unknown) =>
+      log(`${LOG_PREFIX} tick error: ${err instanceof Error ? err.message : String(err)}`)
+    );
   }, PROBE_INTERVAL_MS);
   state.timer.unref?.();
 }

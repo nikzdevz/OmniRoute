@@ -23,6 +23,7 @@ import {
 } from "./targetSorters.ts";
 import { decrementInflight } from "./quotaShareInflight.ts";
 import { getStrategyTraits, type StrategyOrderingKind } from "./strategyRegistry.ts";
+import { orderByLatencyHealth } from "../responsivePriority.ts";
 import type { PreDispatchExclusion } from "./pinRecovery.ts";
 import type { ComboLike, ComboLogger, ResolvedComboTarget } from "./types.ts";
 
@@ -371,6 +372,38 @@ const STRATEGY_ORDERERS: Record<
   },
   "quota-weighted": orderByQuotaWeighted,
   "quota-share": orderByQuotaShare,
+  "responsive-priority": (orderedTargets, { log }) => {
+    // Sort the model strings by live measured latency health (fresh samples
+    // first ascending, unknown/stale keep declared position, failed last),
+    // then rebuild the target list in that order — mirroring
+    // sortTargetsByContextSize's model→target mapping. Pure permutation:
+    // the attempt loop below keeps the full fallback chain either way.
+    const orderedModels = orderByLatencyHealth(orderedTargets.map((target) => target.modelStr));
+    const byModel = new Map<string, ResolvedComboTarget[]>();
+    for (const target of orderedTargets) {
+      const queue = byModel.get(target.modelStr) || [];
+      queue.push(target);
+      byModel.set(target.modelStr, queue);
+    }
+    const nextTargets = orderedModels
+      .map((modelStr) => {
+        const queue = byModel.get(modelStr);
+        return queue?.shift() || null;
+      })
+      .filter((target): target is ResolvedComboTarget => target !== null);
+    if (nextTargets[0]?.modelStr !== orderedTargets[0]?.modelStr) {
+      log.info(
+        "COMBO",
+        `Responsive-priority ordering: fastest measured model first (${nextTargets[0]?.modelStr})`
+      );
+    } else {
+      log.info(
+        "COMBO",
+        `Responsive-priority ordering: no fresh latency data, keeping priority order (${nextTargets[0]?.modelStr})`
+      );
+    }
+    return orderedOnly(nextTargets);
+  },
 };
 
 /**
