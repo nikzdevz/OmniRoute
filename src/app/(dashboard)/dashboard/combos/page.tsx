@@ -36,6 +36,8 @@ const STRATEGY_LABEL_FALLBACK = {
 const STRATEGY_DESC_FALLBACK = {
   "context-relay":
     "Priority-style routing with automatic context handoffs when account rotation happens.",
+  "responsive-priority":
+    "Priority routing re-ordered by live measured latency — the fastest healthy model is tried first.",
 };
 
 const STRATEGY_GUIDANCE_FALLBACK = {
@@ -89,6 +91,13 @@ const STRATEGY_GUIDANCE_FALLBACK = {
     when: "Use when you want perfectly even spread — each model used once before repeating.",
     avoid: "Avoid when models have different quality or latency and order matters.",
     example: "Example: Multiple accounts of the same model to distribute usage evenly.",
+  },
+  "responsive-priority": {
+    when: "Use when models differ in speed and you want the fastest healthy endpoint tried first.",
+    avoid:
+      "Avoid when you need deterministic ordering or when probing every 30s is undesirable on noisy networks.",
+    example:
+      "Example: Several fast API providers where you always want the lowest-latency one first.",
   },
 };
 

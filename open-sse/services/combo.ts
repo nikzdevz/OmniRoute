@@ -22,6 +22,7 @@ import { DEFAULT_WEIGHTS, scorePool } from "./autoCombo/scoring.ts";
 import { supportsToolCalling } from "./modelCapabilities.ts";
 import { getSessionConnection } from "./sessionManager.ts";
 import { getModelContextLimit } from "../../src/lib/modelsDevSync";
+import { orderByLatencyHealth } from "./responsivePriority.ts";
 
 // Status codes that should mark semaphore + record circuit breaker failures
 const TRANSIENT_FOR_BREAKER = [429, 502, 503, 504];
@@ -937,6 +938,17 @@ export async function handleComboChat({
   } else if (strategy === "context-optimized") {
     orderedModels = sortModelsByContextSize(orderedModels);
     log.info("COMBO", `Context-optimized ordering: largest first (${orderedModels[0]})`);
+  } else if (strategy === "responsive-priority") {
+    const ordered = orderByLatencyHealth(orderedModels);
+    const first = ordered[0];
+    // Unknown/stale cache degrades to existing priority order; report which.
+    log.info(
+      "COMBO",
+      first === orderedModels[0]
+        ? `Responsive-priority ordering: no fresh latency data, keeping priority order (${first})`
+        : `Responsive-priority ordering: fastest measured model first (${first})`
+    );
+    orderedModels = ordered;
   }
 
   let lastError = null;

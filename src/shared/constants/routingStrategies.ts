@@ -11,7 +11,8 @@ export type RoutingStrategyValue =
   | "strict-random"
   | "auto"
   | "context-optimized"
-  | "lkgp";
+  | "lkgp"
+  | "responsive-priority";
 
 type RoutingStrategyOption = {
   value: RoutingStrategyValue;
@@ -112,6 +113,13 @@ export const ROUTING_STRATEGIES: RoutingStrategyOption[] = [
     combosDescKey: "contextOptimizedDesc",
     settingsDescKey: "contextOptDesc",
     icon: "text_snippet",
+  },
+  {
+    value: "responsive-priority",
+    labelKey: "responsivePriority",
+    combosDescKey: "responsivePriorityDesc",
+    settingsDescKey: "responsivePriorityDesc",
+    icon: "speed",
   },
 ];
 

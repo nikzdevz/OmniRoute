@@ -88,6 +88,7 @@ const comboStrategySchema = z.enum([
   "auto",
   "lkgp",
   "context-optimized",
+  "responsive-priority",
 ]);
 
 const scoringWeightsSchema = z

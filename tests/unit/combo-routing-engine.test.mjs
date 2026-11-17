@@ -27,6 +27,8 @@ const { getCircuitBreaker, resetAllCircuitBreakers } =
 const { acquire: acquireSemaphore, resetAll: resetAllSemaphores } =
   await import("../../open-sse/services/rateLimitSemaphore.ts");
 const { _resetAllDecks } = await import("../../src/shared/utils/shuffleDeck.ts");
+const { recordLatencySample, clearLatencyHealth, LATENCY_TTL_MS } =
+  await import("../../open-sse/services/responsivePriority.ts");
 
 function createLog() {
   const entries = [];
@@ -1404,4 +1406,89 @@ test("handleComboChat round-robin recovers from provider-scoped 400s when a late
 
   assert.equal(result.ok, true);
   assert.deepEqual(calls, ["model-a", "model-b"]);
+});
+
+// ── Responsive-Priority strategy ─────────────────────────────────────────────
+
+test("handleComboChat responsive-priority orders by measured latency and keeps fallback", async () => {
+  const calls = [];
+  recordLatencySample("model-slow", { latencyMs: 900, ok: true, probedAt: Date.now() });
+  recordLatencySample("model-fast", { latencyMs: 100, ok: true, probedAt: Date.now() });
+
+  const result = await handleComboChat({
+    body: {},
+    combo: {
+      name: "responsive-order",
+      strategy: "responsive-priority",
+      models: ["model-slow", "model-fast"],
+      config: { maxRetries: 0 },
+    },
+    handleSingleModel: async (_body, modelStr) => {
+      calls.push(modelStr);
+      if (modelStr === "model-fast") return errorResponse(500, "temporary");
+      return okResponse();
+    },
+    isModelAvailable: async () => true,
+    log: createLog(),
+    settings: null,
+    allCombos: null,
+  });
+
+  // Fastest measured model tried first, existing fallback picks the next.
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ["model-fast", "model-slow"]);
+});
+
+test("handleComboChat responsive-priority degrades to configured order on cold cache", async () => {
+  clearLatencyHealth();
+  const calls = [];
+
+  const result = await handleComboChat({
+    body: {},
+    combo: {
+      name: "responsive-cold",
+      strategy: "responsive-priority",
+      models: ["model-first", "model-second"],
+      config: { maxRetries: 0 },
+    },
+    handleSingleModel: async (_body, modelStr) => {
+      calls.push(modelStr);
+      return okResponse();
+    },
+    isModelAvailable: async () => true,
+    log: createLog(),
+    settings: null,
+    allCombos: null,
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ["model-first"]); // priority order preserved, no probe data
+});
+
+test("handleComboChat responsive-priority demotes failed probes after TTL freshness", async () => {
+  const calls = [];
+  recordLatencySample("model-failed", { latencyMs: 0, ok: false, probedAt: Date.now() });
+  recordLatencySample("model-ok", { latencyMs: 500, ok: true, probedAt: Date.now() });
+
+  const result = await handleComboChat({
+    body: {},
+    combo: {
+      name: "responsive-failed",
+      strategy: "responsive-priority",
+      models: ["model-failed", "model-ok"],
+      config: { maxRetries: 0 },
+    },
+    handleSingleModel: async (_body, modelStr) => {
+      calls.push(modelStr);
+      return okResponse();
+    },
+    isModelAvailable: async () => true,
+    log: createLog(),
+    settings: null,
+    allCombos: null,
+  });
+
+  // Failed probe demoted; healthy model first.
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ["model-ok"]);
 });

@@ -107,9 +107,11 @@ async function cleanup(): Promise<void> {
 
 /**
  * Initialize graceful shutdown handlers.
- * Should be called once during server startup.
+ *
+ * Background services are stopped when the process shuts down; `stopHooks`
+ * lists the extra stop callbacks registered for that moment.
  */
-export function initGracefulShutdown(): void {
+export function initGracefulShutdown(stopHooks: Array<() => void> = []): void {
   const state = getShutdownState();
   if (state.init) return;
   state.init = true;
@@ -121,6 +123,15 @@ export function initGracefulShutdown(): void {
     console.log(`\n[Shutdown] Received ${signal}. Draining ${state.activeRequests} request(s)...`);
 
     await waitForDrain();
+
+    for (const stop of stopHooks) {
+      try {
+        await stop();
+      } catch (err) {
+        console.error("[Shutdown] Error during stop hook:", (err as Error).message);
+      }
+    }
+
     await cleanup();
 
     console.log("[Shutdown] Bye.");

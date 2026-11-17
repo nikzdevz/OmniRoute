@@ -95,13 +95,36 @@ export async function registerNodejs(): Promise<void> {
     import("@/lib/db/settings"),
   ]);
 
-  initGracefulShutdown();
+  const responsivePriorityStopHook = async () => {
+    try {
+      const { stopResponsivePriorityScheduler } =
+        await import("@omniroute/open-sse/services/responsivePriority.ts");
+      await stopResponsivePriorityScheduler();
+    } catch (err) {
+      console.warn(
+        "[STARTUP] Could not capture stop handler:",
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+  };
+
+  initGracefulShutdown([responsivePriorityStopHook]);
   initApiBridgeServer();
   if (!isBackgroundServicesDisabled()) {
     startBackgroundRefresh();
     console.log("[STARTUP] Quota cache background refresh started");
     startProviderLimitsSyncScheduler();
     console.log("[STARTUP] Provider limits sync scheduler started");
+
+    try {
+      const { startResponsivePriorityScheduler } =
+        await import("@omniroute/open-sse/services/responsivePriority.ts");
+      startResponsivePriorityScheduler();
+      console.log("[STARTUP] Responsive-priority latency probe scheduler started");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[STARTUP] Could not start responsive-priority scheduler:", msg);
+    }
   }
 
   try {
