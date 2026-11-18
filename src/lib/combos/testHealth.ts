@@ -1,3 +1,6 @@
+import { resolveSelfLoopBearer } from "@/shared/middleware/chatAdmissionIdentity";
+import { SELF_HOP_HEADER, ownListenerSelfHopToken } from "@omniroute/open-sse/utils/selfHop";
+
 type JsonRecord = Record<string, unknown>;
 
 const COMBO_TEST_MAX_TOKENS = 64;
@@ -319,6 +322,10 @@ export interface ComboModelProbeOptions {
  *
  * The request carries `X-Internal-Test` so it never involves user auth, and
  * `X-OmniRoute-No-Cache` so it cannot be satisfied from a response cache.
+ * Since v3.8.55, `/v1/chat/completions` enforces authentication at the route
+ * level (`enforceClientApiRouteAuth`), so the request presents the same
+ * per-process self-loop bearer + self-hop token as the dashboard's own
+ * model test runner (`buildInternalChatRequest`).
  */
 export async function testComboModel(
   modelStr: string,
@@ -351,12 +358,20 @@ export async function testComboModel(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        // Internal tests use the normal /v1 pipeline but bypass REQUIRE_API_KEY
-        // so admins can test with local session auth.
+        // v3.8.55 route-level auth: the per-process self-loop bearer satisfies
+        // `enforceClientApiRouteAuth` under REQUIRE_API_KEY=true, and the
+        // self-hop token vouches for the internal-test mark being process-local.
+        Authorization: `Bearer ${resolveSelfLoopBearer()}`,
+        [SELF_HOP_HEADER]: ownListenerSelfHopToken(),
+        // Strict-mode internal bypass for live health checks (skips cooldowns,
+        // breakers and quota policy; only counts next to the self-hop token).
         "X-Internal-Test": "combo-health-check",
+        // Memory opt-out: a health probe must not feed memory extraction.
+        "x-omniroute-no-memory": "true",
         // Force a fresh execution path so combo tests cannot be satisfied by
         // OmniRoute's semantic cache or other request reuse layers.
         "X-OmniRoute-No-Cache": "true",
+        "X-OmniRoute-Compression": "off",
         "X-Request-Id": `${probe ? "resp-priority-probe" : "combo-test"}-${randomUUID()}`,
       },
       body: JSON.stringify(testBody),
