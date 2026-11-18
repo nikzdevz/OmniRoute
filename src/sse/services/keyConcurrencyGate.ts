@@ -43,7 +43,7 @@ const capCache = new Map<string, { cap: number; ts: number }>();
 function resolveCapCached(apiKeyId: string): number {
   const cached = capCache.get(apiKeyId);
   const now = Date.now();
-  if (cached && now - cached.timestamp < CAP_CACHE_TTL_MS) return cached.cap;
+  if (cached && now - cached.ts < CAP_CACHE_TTL_MS) return cached.cap;
   const cap = getApiKeyConcurrencyCap(apiKeyId);
   if (capCache.size > 2000) capCache.clear();
   capCache.set(apiKeyId, { cap, ts: now });
