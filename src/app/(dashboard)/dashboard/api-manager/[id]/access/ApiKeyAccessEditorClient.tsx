@@ -393,6 +393,7 @@ function AccessLimitsPanelPanelContent({ context }: { context: AccessFormContext
     <LimitsTab
       formState={form.formState}
       setMaxSessions={form.setMaxSessions}
+      setMaxConcurrent={form.setMaxConcurrent}
       setThrottleDelayMs={form.setThrottleDelayMs}
       addRateLimit={form.addRateLimit}
       removeRateLimit={form.removeRateLimit}

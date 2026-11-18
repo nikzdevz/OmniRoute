@@ -114,6 +114,7 @@ export interface ApiKeyAccessData {
   isBanned?: boolean | null;
   expiresAt?: string | null;
   maxSessions?: number | null;
+  maxConcurrent?: number | null;
   accessSchedule?: AccessSchedule | null;
   rateLimits?: RateLimitEntry[] | null;
   scopes?: string[] | null;
@@ -158,6 +159,7 @@ export interface ApiKeyAccessFormState {
   isBanned: boolean;
   expiresAt: string;
   maxSessions: number;
+  maxConcurrent: number;
   scheduleEnabled: boolean;
   scheduleFrom: string;
   scheduleUntil: string;
@@ -283,6 +285,7 @@ function initialKeyStatusState(apiKey: StoredApiKey) {
     isBanned: apiKey?.isBanned === true,
     expiresAt: apiKey?.expiresAt ?? "",
     maxSessions: positiveNumberOrZero(apiKey?.maxSessions),
+    maxConcurrent: positiveNumberOrZero(apiKey?.maxConcurrent),
   };
 }
 
@@ -453,6 +456,12 @@ function normalizeMaxSessions(maxSessions: number): number {
     : 0;
 }
 
+function normalizeMaxConcurrent(maxConcurrent: number): number {
+  return typeof maxConcurrent === "number" && Number.isFinite(maxConcurrent)
+    ? Math.max(0, Math.floor(maxConcurrent))
+    : 0;
+}
+
 function normalizeThrottleDelayMs(throttleDelayMs: number): number {
   return typeof throttleDelayMs === "number" && Number.isFinite(throttleDelayMs)
     ? Math.max(0, Math.min(300000, Math.floor(throttleDelayMs)))
@@ -491,6 +500,7 @@ export function buildApiKeyAccessPayload(
   const validCombos = buildValidCombos(formState);
   const validConnections = buildValidConnections(formState);
   const normalizedMaxSessions = normalizeMaxSessions(formState.maxSessions);
+  const normalizedMaxConcurrent = normalizeMaxConcurrent(formState.maxConcurrent);
   const normalizedThrottleDelayMs = normalizeThrottleDelayMs(formState.throttleDelayMs);
   const schedule = buildAccessSchedule(formState);
 
@@ -525,6 +535,7 @@ export function buildApiKeyAccessPayload(
     isBanned: formState.isBanned,
     expiresAt: formState.expiresAt || null,
     maxSessions: normalizedMaxSessions,
+    maxConcurrent: normalizedMaxConcurrent,
     accessSchedule: schedule,
     rateLimits: formState.rateLimits.length > 0 ? formState.rateLimits : null,
     scopes,
@@ -585,6 +596,9 @@ export function validateForm(
   }
   if (formState.maxSessions < 0) {
     errors.limits.push(tr("maxSessionsNegativeError"));
+  }
+  if (formState.maxConcurrent < 0) {
+    errors.limits.push(tr("maxConcurrentNegativeError"));
   }
   for (const rl of formState.rateLimits) {
     if (rl.limit <= 0 || rl.window <= 0) {
@@ -960,6 +974,13 @@ function useLimitSetters(setFormState: FormStateSetter) {
     [setFormState]
   );
 
+  const setMaxConcurrent = useCallback(
+    (maxConcurrent: number) => {
+      setFormState((prev) => ({ ...prev, maxConcurrent }));
+    },
+    [setFormState]
+  );
+
   const setThrottleDelayMs = useCallback(
     (throttleDelayMs: number) => {
       setFormState((prev) => ({ ...prev, throttleDelayMs }));
@@ -1027,6 +1048,7 @@ function useLimitSetters(setFormState: FormStateSetter) {
 
   return {
     setMaxSessions,
+    setMaxConcurrent,
     setThrottleDelayMs,
     addRateLimit,
     removeRateLimit,

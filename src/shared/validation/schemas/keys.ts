@@ -188,6 +188,8 @@ export const updateKeyPermissionsSchema = z
     isBanned: z.boolean().optional(),
     expiresAt: z.string().datetime().nullable().optional(),
     maxSessions: z.number().int().min(0).max(10000).optional(),
+    // Per-key concurrency cap; 0 = unlimited. Fail-fast 429 when exceeded.
+    maxConcurrent: z.number().int().min(0).max(10000).optional(),
     accessSchedule: z.union([accessScheduleSchema, z.null()]).optional(),
     rateLimits: z
       .union([
@@ -265,6 +267,7 @@ export const updateKeyPermissionsSchema = z
       value.isBanned === undefined &&
       value.expiresAt === undefined &&
       value.maxSessions === undefined &&
+      value.maxConcurrent === undefined &&
       value.accessSchedule === undefined &&
       value.rateLimits === undefined &&
       value.scopes === undefined &&

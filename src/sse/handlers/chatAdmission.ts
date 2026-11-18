@@ -13,6 +13,10 @@ import {
   type AdaptiveAdmissionRuntime,
 } from "@omniroute/open-sse/services/admission/runtime.ts";
 import type { PerTargetAdmissionHook } from "@omniroute/open-sse/services/admission/types.ts";
+import {
+  attachKeySlotRelease,
+  tryAcquireApiKeyConcurrencySlot,
+} from "../services/keyConcurrencyGate.ts";
 
 /** Single fairness bucket for unauthenticated / keyless traffic. Opaque; never a raw key. */
 export const ANONYMOUS_ADMISSION_TENANT_KEY = "anonymous";
@@ -269,7 +273,26 @@ export function createChatAdmissionContext(
         return result.response;
       }
 
-      state = { runtime, admitted: result };
+      // Per-API-key concurrency cap (fail-fast 429, never queues). Exactly once
+      // per request — the acquireStarted guard above covers this path too. The
+      // slot is released through the composite lease below, so it rides the
+      // same response lifecycle (stream end / disconnect / handler throw) as
+      // the admission lease itself.
+      let admitted: AdaptiveAdmissionAdmitted = result;
+      if (apiKeyId) {
+        const keySlot = await tryAcquireApiKeyConcurrencySlot(apiKeyId);
+        if (keySlot.status === "limited") {
+          return keySlot.response;
+        }
+        if (keySlot.status === "admitted") {
+          admitted = {
+            ...result,
+            lease: attachKeySlotRelease(result.lease, keySlot.slot.release),
+          };
+        }
+      }
+
+      state = { runtime, admitted };
       return null;
     },
     createPerTargetAdmissionHook(apiKeyId, request) {

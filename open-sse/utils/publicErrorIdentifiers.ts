@@ -26,6 +26,7 @@ const SAFE_PUBLIC_ERROR_IDENTIFIERS = new Set([
   "antigravity_pool_busy",
   "antigravity_pre_response_timeout",
   "api_error",
+  "api_key_concurrency_limited",
   "auth_error",
   "authentication_error",
   "authentication_required",

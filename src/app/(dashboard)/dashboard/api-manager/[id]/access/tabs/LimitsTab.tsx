@@ -13,6 +13,7 @@ import TabErrorList from "./TabErrorList";
 interface LimitsTabProps {
   formState: ApiKeyAccessFormState;
   setMaxSessions: (sessions: number) => void;
+  setMaxConcurrent: (maxConcurrent: number) => void;
   setThrottleDelayMs: (delay: number) => void;
   addRateLimit: () => void;
   removeRateLimit: (index: number) => void;
@@ -50,6 +51,35 @@ function MaxSessionsField({ formState, setMaxSessions }: LimitsSectionProps<"set
           onChange={(e) => {
             const parsed = Number.parseInt(e.target.value || "0", 10);
             setMaxSessions(Number.isFinite(parsed) && parsed > 0 ? parsed : 0);
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function MaxConcurrentField({
+  formState,
+  setMaxConcurrent,
+}: LimitsSectionProps<"setMaxConcurrent">) {
+  const t = useTranslations("apiManager");
+
+  return (
+    <div className="flex items-start justify-between gap-3 p-4 rounded-lg border border-border bg-surface/40">
+      <div className="flex flex-col gap-1">
+        <p className="text-sm font-medium text-text-main">{t("maxConcurrent")}</p>
+        <p className="text-xs text-text-muted">{t("maxConcurrentDescription")}</p>
+      </div>
+      <div className="w-32 shrink-0">
+        <Input
+          type="number"
+          min={0}
+          step={1}
+          aria-label={t("maxConcurrent")}
+          value={String(formState.maxConcurrent)}
+          onChange={(e) => {
+            const parsed = Number.parseInt(e.target.value || "0", 10);
+            setMaxConcurrent(Number.isFinite(parsed) && parsed > 0 ? parsed : 0);
           }}
         />
       </div>
@@ -292,6 +322,7 @@ function AccessScheduleSection({
 export default function LimitsTab({
   formState,
   setMaxSessions,
+  setMaxConcurrent,
   setThrottleDelayMs,
   addRateLimit,
   removeRateLimit,
@@ -313,6 +344,9 @@ export default function LimitsTab({
 
       {/* Max Sessions Limit (T08) */}
       <MaxSessionsField formState={formState} setMaxSessions={setMaxSessions} />
+
+      {/* Max Concurrent Requests (fail-fast 429) */}
+      <MaxConcurrentField formState={formState} setMaxConcurrent={setMaxConcurrent} />
 
       {/* Soft Throttle */}
       <ThrottleDelayField formState={formState} setThrottleDelayMs={setThrottleDelayMs} />

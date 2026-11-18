@@ -155,6 +155,8 @@ interface ApiKeyMetadata {
   allowCcDiscoveryAliases: boolean;
   catalogScope: "all" | "combos" | "models";
   forcedModel: string | null;
+  /** Max concurrent in-flight requests; 0 = unlimited (default & backward-compatible). */
+  maxConcurrent: number;
 }
 
 interface ApiKeyRow extends JsonRecord {
@@ -216,6 +218,8 @@ interface ApiKeyRow extends JsonRecord {
   catalogScope?: unknown;
   forced_model?: unknown;
   forcedModel?: unknown;
+  max_concurrent?: unknown;
+  maxConcurrent?: unknown;
 }
 
 interface StatementLike<TRow = unknown> {
@@ -513,7 +517,7 @@ function getPreparedStatements(db: ApiKeysDbLike): ApiKeysStatements {
       "SELECT id, expires_at, revoked_at, is_active, is_banned FROM api_keys WHERE key_hash = ?"
     );
     _stmtGetKeyMetadata = db.prepare<ApiKeyRow>(
-      "SELECT id, name, machine_id, model_access_mode, allowed_models, blocked_models, allowed_combos, allowed_connections, preferred_connections, allowed_quotas, no_log, auto_resolve, is_active, access_schedule, max_requests_per_day, max_requests_per_minute, throttle_delay_ms, max_sessions, revoked_at, expires_at, ip_allowlist, scopes, rate_limits, is_banned, key_hash, allowed_endpoints, stream_default_mode, cache_default_mode, codex_service_mode, disable_non_public_models, allow_usage_command, usage_limit_enabled, daily_usage_limit_usd, weekly_usage_limit_usd, five_hour_usage_limit_usd, chaos_mode_enabled, compression_enabled, allow_auto_combos, allow_cc_discovery_aliases, catalog_scope, forced_model, proxy_id FROM api_keys WHERE key_hash = ?"
+      "SELECT id, name, machine_id, model_access_mode, allowed_models, blocked_models, allowed_combos, allowed_connections, preferred_connections, allowed_quotas, no_log, auto_resolve, is_active, access_schedule, max_requests_per_day, max_requests_per_minute, throttle_delay_ms, max_sessions, revoked_at, expires_at, ip_allowlist, scopes, rate_limits, is_banned, key_hash, allowed_endpoints, stream_default_mode, cache_default_mode, codex_service_mode, disable_non_public_models, allow_usage_command, usage_limit_enabled, daily_usage_limit_usd, weekly_usage_limit_usd, five_hour_usage_limit_usd, chaos_mode_enabled, compression_enabled, allow_auto_combos, allow_cc_discovery_aliases, catalog_scope, forced_model, proxy_id, max_concurrent FROM api_keys WHERE key_hash = ?"
     );
     _stmtInsertKey = db.prepare(
       "INSERT INTO api_keys (id, name, key, machine_id, model_access_mode, allowed_models, allowed_combos, allowed_connections, preferred_connections, no_log, created_at, key_prefix, key_hash, scopes, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -1012,6 +1016,7 @@ export async function updateApiKeyPermissions(
     normalized.isBanned === undefined &&
     normalized.expiresAt === undefined &&
     (normalized as Record<string, unknown>).maxSessions === undefined &&
+    (normalized as Record<string, unknown>).maxConcurrent === undefined &&
     (normalized as Record<string, unknown>).scopes === undefined &&
     (normalized as Record<string, unknown>).proxyId === undefined &&
     (normalized as Record<string, unknown>).allowedEndpoints === undefined &&
@@ -1052,6 +1057,7 @@ export async function updateApiKeyPermissions(
     rateLimits?: string | null;
     isBanned?: number;
     maxSessions?: number;
+    maxConcurrent?: number;
     expiresAt?: string | null;
     scopes?: string;
     proxyId?: string | null;
@@ -1218,6 +1224,13 @@ export async function updateApiKeyPermissions(
   if (maxSessionsUpdate !== undefined) {
     updates.push("max_sessions = @maxSessions");
     params.maxSessions = typeof maxSessionsUpdate === "number" ? Math.max(0, maxSessionsUpdate) : 0;
+  }
+
+  const maxConcurrentUpdate = (normalized as Record<string, unknown>).maxConcurrent;
+  if (maxConcurrentUpdate !== undefined) {
+    updates.push("max_concurrent = @maxConcurrent");
+    params.maxConcurrent =
+      typeof maxConcurrentUpdate === "number" ? Math.max(0, Math.floor(maxConcurrentUpdate)) : 0;
   }
 
   const proxyIdUpdate = (normalized as Record<string, unknown>).proxyId;
@@ -1624,6 +1637,7 @@ export async function getApiKeyMetadata(
       maxRequestsPerMinute: null,
       throttleDelayMs: null,
       maxSessions: 0,
+      maxConcurrent: 0,
       revokedAt: null,
       expiresAt: null,
       ipAllowlist: [],
@@ -1675,6 +1689,7 @@ export async function getApiKeyMetadata(
   const rawThrottleDelayMs = record.throttle_delay_ms ?? (record as JsonRecord).throttleDelayMs;
 
   const rawMaxSessions = record.max_sessions ?? record.maxSessions;
+  const rawMaxConcurrent = record.max_concurrent ?? record.maxConcurrent;
 
   const rawAllowedModels = record.allowed_models ?? record.allowedModels;
   const metadata: ApiKeyMetadata = {
@@ -1708,6 +1723,11 @@ export async function getApiKeyMetadata(
       typeof rawThrottleDelayMs === "number" && rawThrottleDelayMs > 0 ? rawThrottleDelayMs : null,
     // T08: max concurrent sessions; 0 = unlimited (default & backward-compatible)
     maxSessions: typeof rawMaxSessions === "number" && rawMaxSessions > 0 ? rawMaxSessions : 0,
+    // Per-key concurrency cap; 0 = unlimited (default & backward-compatible)
+    maxConcurrent:
+      typeof rawMaxConcurrent === "number" && rawMaxConcurrent > 0
+        ? Math.floor(rawMaxConcurrent)
+        : 0,
     revokedAt: parseNullableTimestamp(record.revoked_at ?? (record as JsonRecord).revokedAt),
     expiresAt: parseNullableTimestamp(record.expires_at ?? (record as JsonRecord).expiresAt),
     ipAllowlist: parseStringList(record.ip_allowlist ?? (record as JsonRecord).ipAllowlist),
@@ -1768,6 +1788,29 @@ export async function getApiKeyMetadata(
   }
 
   return metadata;
+}
+
+/**
+ * Read the per-key concurrency cap (max_concurrent) directly by key id.
+ * 0 = unlimited. Kept separate from getApiKeyMetadata() so the admission
+ * hot path can resolve the cap without decrypting the key secret.
+ */
+export function getApiKeyConcurrencyCap(id: string | null | undefined): number {
+  if (!id || typeof id !== "string" || id.trim() === "" || id === SYNTHETIC_ENV_API_KEY_ID) {
+    return 0;
+  }
+  try {
+    const db = getDbInstance() as ApiKeysDbLike;
+    ensureApiKeysColumns(db);
+    const row = db
+      .prepare<{ max_concurrent: unknown }>("SELECT max_concurrent FROM api_keys WHERE id = ?")
+      .get(id);
+    const raw = row?.max_concurrent;
+    return typeof raw === "number" && raw > 0 ? Math.floor(raw) : 0;
+  } catch {
+    // Fail open: an unavailable policy lookup must not brick request admission.
+    return 0;
+  }
 }
 
 /**

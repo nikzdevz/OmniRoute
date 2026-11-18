@@ -22,6 +22,7 @@ export interface ApiKeyPermissionsUpdate {
   isBanned?: boolean;
   expiresAt?: string | null;
   maxSessions?: number | null;
+  maxConcurrent?: number | null;
   scopes?: string[] | null;
   proxyId?: string | null;
   allowedEndpoints?: string[] | null;
@@ -70,6 +71,7 @@ export function normalizeApiKeyPermissionsUpdate(
     isBanned: update.isBanned,
     expiresAt: update.expiresAt,
     maxSessions: update.maxSessions,
+    maxConcurrent: update.maxConcurrent,
     scopes: update.scopes,
     proxyId: update.proxyId,
     allowedEndpoints: update.allowedEndpoints,

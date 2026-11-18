@@ -78,6 +78,7 @@ interface ApiKey {
   isBanned?: boolean;
   expiresAt?: string | null;
   maxSessions?: number;
+  maxConcurrent?: number;
   accessSchedule?: AccessSchedule | null;
   rateLimits?: Array<{ limit: number; window: number }> | null;
   scopes?: string[];
@@ -745,6 +746,7 @@ export default function ApiManagerPageClient() {
               const hasLocalUsageCommand = key.allowUsageCommand === true;
               const maxSessions = typeof key.maxSessions === "number" ? key.maxSessions : 0;
               const hasSessionLimit = maxSessions > 0;
+              const maxConcurrent = typeof key.maxConcurrent === "number" ? key.maxConcurrent : 0;
               const activeSessions = sessionCounts[key.id] || 0;
               const deviceCount = deviceCounts[key.id] || 0;
               const hasSchedule = key.accessSchedule?.enabled === true;
@@ -910,6 +912,12 @@ export default function ApiManagerPageClient() {
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-chart-3/10 text-chart-3-ink text-[11px] font-medium">
                           <Icon name="group" size={12} />
                           Sessions: {activeSessions}/{maxSessions}
+                        </span>
+                      )}
+                      {maxConcurrent > 0 && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-chart-3/10 text-chart-3-ink text-[11px] font-medium">
+                          <Icon name="swap_vert" size={12} />
+                          Concurrency: {maxConcurrent}
                         </span>
                       )}
                       {deviceCount > 0 && (
