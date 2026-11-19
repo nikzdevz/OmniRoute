@@ -51,7 +51,43 @@ type CallLogEntry = {
   error?: string | null;
 };
 
+type ResponsiveProbeModel = {
+  modelStr: string;
+  provider: string | null;
+  rank: number | null;
+  ping: {
+    latencyMs: number;
+    ok: boolean;
+    probedAt: string;
+    fresh: boolean;
+  } | null;
+  usage: {
+    requests: number;
+    successes: number;
+    failures: number;
+    avgLatencyMs: number | null;
+    lastStatus: "ok" | "error" | null;
+    lastUsedAt: string | null;
+  } | null;
+};
+
+type ResponsiveHealthResponse = {
+  comboName: string;
+  strategy: string | null;
+  isResponsivePriority: boolean;
+  schedulerRunning: boolean;
+  probeIntervalMs: number;
+  ttlMs: number;
+  effectiveFirst: string | null;
+  lastUsed: { modelStr: string; lastUsedAt: string | null } | null;
+  models: ResponsiveProbeModel[];
+};
+
 const TIME_RANGES: TimeRange[] = ["1h", "24h", "7d", "30d"];
+
+// Matches the responsive-priority probe cadence — a poll every 30s sees every
+// fresh probe sample exactly once.
+const PROBE_POLL_MS = 30_000;
 
 const STATE_VARIANT: Record<
   ComboControlCenterSummary["healthState"],
@@ -298,12 +334,166 @@ function RuntimeConfigValue({ value }: { value: unknown }) {
   return <code className="max-w-45 truncate text-xs text-text-main">{String(value)}</code>;
 }
 
+type PingTone = "success" | "warning" | "error" | "muted";
+
+function pingTone(ping: ResponsiveProbeModel["ping"]): PingTone {
+  if (!ping) return "muted";
+  if (!ping.ok) return "error";
+  return ping.fresh ? "success" : "warning";
+}
+
+const PING_TONE_TEXT: Record<PingTone, string> = {
+  success: "text-success",
+  warning: "text-warning",
+  error: "text-error",
+  muted: "text-text-muted",
+};
+
+const PING_TONE_DOT: Record<PingTone, string> = {
+  success: "bg-success",
+  warning: "bg-warning",
+  error: "bg-error",
+  muted: "bg-text-muted/40",
+};
+
+function pingStatusLabel(
+  ping: ResponsiveProbeModel["ping"],
+  t: ReturnType<typeof useTranslations>
+): string {
+  if (!ping) return t("pingNoData");
+  if (!ping.ok) return t("pingFailed");
+  return ping.fresh ? t("pingLive") : t("pingStale");
+}
+
+function LiveProbePanel({ probe }: { probe: ResponsiveHealthResponse }) {
+  const t = useTranslations("comboControl");
+  const isResponsive = probe.isResponsivePriority;
+
+  return (
+    <Card className="p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h2 className="text-lg text-text-main">{t("liveProbeTitle")}</h2>
+          <p className="mt-1 max-w-2xl text-sm text-text-muted">{t("liveProbeDescription")}</p>
+        </div>
+        <Badge variant={probe.schedulerRunning ? "success" : "warning"} className="shrink-0">
+          {probe.schedulerRunning ? t("probeSchedulerRunning") : t("probeSchedulerStopped")}
+        </Badge>
+      </div>
+
+      {isResponsive && (
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <div className="rounded-xl border border-primary/30 bg-primary/5 p-3">
+            <p className="text-xs uppercase tracking-wide text-text-muted">{t("routedFirstNow")}</p>
+            <p className="mt-1 font-mono text-sm font-semibold text-text-main">
+              {probe.effectiveFirst ?? "—"}
+            </p>
+            <p className="mt-1 text-xs text-text-muted">{t("routedFirstHint")}</p>
+          </div>
+          <div className="rounded-xl border border-border bg-bg-subtle p-3">
+            <p className="text-xs uppercase tracking-wide text-text-muted">{t("lastServedBy")}</p>
+            <p className="mt-1 font-mono text-sm font-semibold text-text-main">
+              {probe.lastUsed?.modelStr ?? "—"}
+            </p>
+            <p className="mt-1 text-xs text-text-muted">
+              {probe.lastUsed?.lastUsedAt
+                ? `${t("lastServedHint")} · ${fmtDate(probe.lastUsed.lastUsedAt)}`
+                : t("lastServedHint")}
+            </p>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-4 overflow-x-auto">
+        {probe.models.length === 0 ? (
+          <p className="text-sm text-text-muted">{t("noProbeModels")}</p>
+        ) : (
+          <table className="w-full min-w-[720px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-border text-xs uppercase tracking-wide text-text-muted">
+                <th className="py-2 pr-3 font-medium">{t("rankColumn")}</th>
+                <th className="py-2 pr-3 font-medium">{t("modelColumn")}</th>
+                <th className="py-2 pr-3 font-medium">{t("pingColumn")}</th>
+                <th className="py-2 pr-3 font-medium">{t("requests")}</th>
+                <th className="py-2 pr-3 font-medium">{t("success")}</th>
+                <th className="py-2 pr-3 font-medium">{t("avgLatencyColumn")}</th>
+                <th className="py-2 font-medium">{t("lastUsedColumn")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {probe.models.map((model) => {
+                const tone = pingTone(model.ping);
+                const successRate =
+                  model.usage && model.usage.requests > 0
+                    ? Math.round((model.usage.successes / model.usage.requests) * 100)
+                    : null;
+                return (
+                  <tr key={model.modelStr} className="border-b border-border/60 last:border-0">
+                    <td className="py-2 pr-3 text-text-muted">#{model.rank ?? "?"}</td>
+                    <td className="py-2 pr-3">
+                      <code className="font-mono text-xs text-text-main">{model.modelStr}</code>
+                      {model.provider && (
+                        <span className="ml-2 rounded bg-bg-subtle px-1.5 py-0.5 text-[10px] text-text-muted">
+                          {model.provider}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3">
+                      {model.ping ? (
+                        <span
+                          className={`inline-flex items-center gap-1.5 ${PING_TONE_TEXT[tone]}`}
+                        >
+                          <span className={`size-1.5 rounded-full ${PING_TONE_DOT[tone]}`} />
+                          <span className="font-mono text-xs font-semibold">
+                            {fmtMs(model.ping.latencyMs) || "—"}
+                          </span>
+                          <span className="text-[10px] text-text-muted">
+                            {pingStatusLabel(model.ping, t)}
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="text-xs text-text-muted">{t("pingNoData")}</span>
+                      )}
+                      {model.ping && (
+                        <div className="mt-0.5 text-[10px] text-text-muted">
+                          {t("probedAt", { time: fmtDate(model.ping.probedAt) })}
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 font-mono text-xs text-text-main">
+                      {model.usage?.requests ?? 0}
+                    </td>
+                    <td className="py-2 pr-3 text-xs text-text-main">
+                      {successRate === null ? "—" : `${successRate}%`}
+                    </td>
+                    <td className="py-2 pr-3 font-mono text-xs text-text-main">
+                      {fmtMs(model.usage?.avgLatencyMs) || "—"}
+                    </td>
+                    <td className="py-2 text-xs text-text-muted">
+                      {model.usage?.lastUsedAt ? fmtDate(model.usage.lastUsedAt) : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {!isResponsive && (
+        <p className="mt-3 text-xs text-text-muted">{t("probeNotResponsiveHint")}</p>
+      )}
+    </Card>
+  );
+}
+
 export default function ComboControlCenterClient({ comboId }: { comboId: string }) {
   const t = useTranslations("comboControl");
   const [combo, setCombo] = useState<ComboControlCenterCombo | null>(null);
   const [metrics, setMetrics] = useState<ComboControlCenterMetrics | null>(null);
   const [health, setHealth] = useState<ComboControlCenterHealth | null>(null);
   const [logs, setLogs] = useState<CallLogEntry[]>([]);
+  const [probe, setProbe] = useState<ResponsiveHealthResponse | null>(null);
   const [range, setRange] = useState<TimeRange>("24h");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -322,7 +512,7 @@ export default function ComboControlCenterClient({ comboId }: { comboId: string 
           ? `/api/combos/auto?id=${encodeURIComponent(comboId)}`
           : `/api/combos/${encodeURIComponent(comboId)}`
       );
-      const [metricsData, healthData, logsData] = await Promise.all([
+      const [metricsData, healthData, logsData, probeData] = await Promise.all([
         fetchJson<ComboMetricsResponse>(
           `/api/combos/metrics?combo=${encodeURIComponent(comboData.name || "")}`
         ).catch(() => ({ metrics: null })),
@@ -336,12 +526,16 @@ export default function ComboControlCenterClient({ comboId }: { comboId: string 
         fetchJson<CallLogEntry[]>(
           `/api/usage/call-logs?combo=1&search=${encodeURIComponent(comboData.name || "")}&limit=8`
         ).catch(() => []),
+        fetchJson<ResponsiveHealthResponse>(
+          `/api/combos/responsive-health?name=${encodeURIComponent(comboData.name || "")}`
+        ).catch(() => null),
       ]);
 
       setCombo(comboData);
       setMetrics(metricsData.metrics || null);
       setHealth(healthData);
       setLogs(toArray<CallLogEntry>(logsData));
+      setProbe(probeData);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("loadFailed"));
@@ -356,6 +550,29 @@ export default function ComboControlCenterClient({ comboId }: { comboId: string 
       await load();
     })();
   }, [load]);
+
+  // Live data: the probe scheduler ticks every 30s and the in-memory metrics
+  // change per request, so poll those two on the same cadence. Combo config
+  // and call-log history change rarely and are only re-fetched by `load`.
+  const comboName = combo?.name ?? "";
+  useEffect(() => {
+    if (!comboName) return undefined;
+    const id = setInterval(() => {
+      void (async () => {
+        const [metricsData, probeData] = await Promise.all([
+          fetchJson<ComboMetricsResponse>(
+            `/api/combos/metrics?combo=${encodeURIComponent(comboName)}`
+          ).catch(() => null),
+          fetchJson<ResponsiveHealthResponse>(
+            `/api/combos/responsive-health?name=${encodeURIComponent(comboName)}`
+          ).catch(() => null),
+        ]);
+        if (metricsData?.metrics) setMetrics(metricsData.metrics);
+        if (probeData) setProbe(probeData);
+      })();
+    }, PROBE_POLL_MS);
+    return () => clearInterval(id);
+  }, [comboName]);
 
   const summary = useMemo(
     () => (combo ? summarizeComboControlCenter(combo, metrics, health) : null),
@@ -450,6 +667,8 @@ export default function ComboControlCenterClient({ comboId }: { comboId: string 
           t("providerAccountTelemetry")
         )}
       </div>
+
+      {probe && <LiveProbePanel probe={probe} />}
 
       <Card className="p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
