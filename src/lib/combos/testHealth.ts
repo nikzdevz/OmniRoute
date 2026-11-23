@@ -298,7 +298,11 @@ export function extractComboTestResponseText(
 
 // ── Minimal real-generation probe ───────────────────────────────────────────
 
-const PROBE_MAX_TOKENS = 64;
+/**
+ * Full round-trip latency (non-streaming only). Kept as a named constant so the
+ * probe uses streaming instead and measures time-to-first-token.
+ */
+const PROBE_MAX_TOKENS = 1;
 const PROBE_TIMEOUT_MS = 15_000;
 const COMBO_TEST_TIMEOUT_MS = 20_000;
 
@@ -316,9 +320,9 @@ export interface ComboModelProbeOptions {
 }
 
 /**
- * Send a minimal but REAL chat completion for one model through the internal
- * /v1 pipeline and measure the round-trip latency. Shared by the dashboard's
- * combo test action and the responsive-priority background scheduler.
+ * Minimal but REAL chat completion through the internal /v1 pipeline.
+ * Shared by the dashboard's combo test action and the responsive-priority
+ * background scheduler.
  *
  * The request carries `X-Internal-Test` so it never involves user auth, and
  * `X-OmniRoute-No-Cache` so it cannot be satisfied from a response cache.
@@ -326,6 +330,13 @@ export interface ComboModelProbeOptions {
  * level (`enforceClientApiRouteAuth`), so the request presents the same
  * per-process self-loop bearer + self-hop token as the dashboard's own
  * model test runner (`buildInternalChatRequest`).
+ *
+ * Probe mode (`probe: true`) uses `stream: true` with `max_tokens: 1` and
+ * measures TIME TO FIRST TOKEN (TTFB) — the latency that matters for
+ * responsive-priority ranking — instead of the full 64-token round trip,
+ * which inflated probe latency for reasoning models by tens of seconds
+ * (observed ~65s vs a ~3s real first token). The stream is closed after the
+ * first content event; no full generation is awaited.
  */
 export async function testComboModel(
   modelStr: string,
@@ -350,7 +361,7 @@ export async function testComboModel(
           model: modelStr,
           messages: [{ role: "user", content: "hi" }],
           max_tokens: PROBE_MAX_TOKENS,
-          stream: false,
+          stream: true,
         }
       : buildComboTestRequestBody(modelStr);
 
@@ -378,9 +389,32 @@ export async function testComboModel(
       signal: controller.signal,
     });
 
-    const latencyMs = Date.now() - startTime;
-
     if (res.ok) {
+      // Probe mode measures TTFB: stop at the first SSE data event carrying
+      // usable content (or an in-band error). Non-probe callers keep the
+      // full-response parse.
+      if (probe) {
+        const ttfbMs = Date.now() - startTime;
+        const first = await readFirstStreamPayload(res, controller);
+        if (!first.ok) {
+          const failed = first as Extract<typeof first, { ok: false }>;
+          return {
+            model: modelStr,
+            status: "error" as const,
+            statusCode: failed.statusCode,
+            error: failed.error,
+            latencyMs: Date.now() - startTime,
+          };
+        }
+        return {
+          model: modelStr,
+          status: "ok" as const,
+          latencyMs: ttfbMs,
+          responseText: first.text,
+        };
+      }
+
+      const latencyMs = Date.now() - startTime;
       let responseBody: unknown = null;
       try {
         responseBody = await res.json();
@@ -402,6 +436,7 @@ export async function testComboModel(
       return { model: modelStr, status: "ok", latencyMs, responseText };
     }
 
+    const latencyMs = Date.now() - startTime;
     let errorMsg = "";
     try {
       const errBody = await res.json();
@@ -431,5 +466,71 @@ export async function testComboModel(
   } finally {
     clearTimeout(timeout);
     if (signal) signal.removeEventListener("abort", onExternalAbort);
+  }
+}
+
+/**
+ * Read the first usable SSE payload from a probe stream and cancel the rest.
+ * Returns `{ ok: true, text }` when any content/reasoning token arrived, or
+ * `{ ok: false, error, statusCode? }` when the stream ended first (in-band
+ * error event, HTTP error body, or an empty stream).
+ */
+async function readFirstStreamPayload(
+  res: Response,
+  controller: AbortController
+): Promise<
+  | { ok: true; text: string }
+  | { ok: false; error: string; statusCode?: number }
+> {
+  try {
+    if (!res.body) {
+      return { ok: false, error: "Provider returned HTTP 200 with no stream body." };
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newlineIndex: number;
+        while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+          if (!line.startsWith("data:")) continue;
+          const payload = line.slice(5).trim();
+          if (!payload || payload === "[DONE]") continue;
+          const parsed = extractStreamPayload(payload);
+          if (!parsed) continue;
+          if (parsed.error) {
+            return {
+              ok: false,
+              error: parsed.error.message,
+              ...(parsed.error.statusCode !== undefined
+                ? { statusCode: parsed.error.statusCode }
+                : {}),
+            };
+          }
+          const text = (parsed.text || parsed.reasoning || "").trim();
+          if (text) return { ok: true, text };
+          // A content-less keepalive event is not health evidence yet.
+        }
+      }
+    } finally {
+      // Stop the generation as soon as we have our measurement.
+      try {
+        await reader.cancel();
+      } catch {
+        // ignore — cancellation is best-effort
+      }
+      controller.abort();
+    }
+    return { ok: false, error: "Provider stream ended before any content." };
+  } catch (error: any) {
+    if (error?.name === "AbortError") {
+      return { ok: false, error: "Provider stream ended before any content." };
+    }
+    return { ok: false, error: error?.message || "Probe stream failed" };
   }
 }

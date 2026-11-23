@@ -44,8 +44,13 @@ import { isStaleComboAutoPruneEnabled } from "../../src/lib/combos/staleModelPru
 export const PROBE_INTERVAL_MS = 30_000;
 /** Latency sample freshness window (ms). */
 export const LATENCY_TTL_MS = 60_000;
-/** Max concurrent probes per tick (bounded). */
-export const PROBE_CONCURRENCY = 3;
+/** Max concurrent probes per tick (bounded).
+ *  Bumped to 6 (from 3) so a full sweep of ~260 unique models fits inside the
+ *  60s freshness window now that probes are 1-token streaming (TTFB) instead of
+ *  64-token full completions. At concurrency 3 a sweep took tens of minutes
+ *  and most samples were always stale — the root cause of "not all models get
+ *  probed". */
+export const PROBE_CONCURRENCY = 6;
 /** Per-probe hard timeout (ms) so a hung upstream cannot stall the tick. */
 export const PROBE_TIMEOUT_MS = 15_000;
 /** Timeout (ms) for a model that has failed once consecutively. */
