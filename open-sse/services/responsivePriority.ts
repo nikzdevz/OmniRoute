@@ -19,6 +19,12 @@
  *  - Model probes are deduplicated across combos: one probe per unique model
  *    string per tick, even when several combos share it.
  *  - No invented rate-limit / RPM data. Only real measured latency is stored.
+ *  - Timeout tiers shorten per-probe timeouts after consecutive failures so a
+ *    failing tick never burns the full 15s window while still re-checking
+ *    recovery on each cadence.
+ *  - The ok policy demotes a model once its consecutive failures exceed a
+ *    threshold; demoted models go to the very bottom of the ordering, below
+ *    healthy and unknown models, but are never dropped.
  *  - TTL is 60s. Stale or missing samples fall back to the combo's existing
  *    priority order, so routing never depends on absent data.
  *
@@ -28,6 +34,9 @@
 
 import { resolveNestedComboModels } from "./combo.ts";
 import type { ComboLike } from "./combo/types.ts";
+import { findAllStaleComboModelRefs } from "../../src/lib/combos/staleModelRefs.ts";
+import { pruneStaleComboModelRefs } from "../../src/lib/combos/staleModelPrune.ts";
+import { isStaleComboAutoPruneEnabled } from "../../src/lib/combos/staleModelPrune.ts";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -39,6 +48,19 @@ export const LATENCY_TTL_MS = 60_000;
 export const PROBE_CONCURRENCY = 3;
 /** Per-probe hard timeout (ms) so a hung upstream cannot stall the tick. */
 export const PROBE_TIMEOUT_MS = 15_000;
+/** Timeout (ms) for a model that has failed once consecutively. */
+export const PROBE_TIMEOUT_FAST_MS = 4_000;
+/** Timeout (ms) for a model degrading through repeated failures. */
+export const PROBE_TIMEOUT_DEGRADED_MS = 8_000;
+/** Failures at which the timeout drops to the degraded tier. */
+export const PROBE_TIMEOUT_DEGRADED_AT_FAILURES = 2;
+/** Failures at which the timeout drops to the fast tier. */
+export const PROBE_TIMEOUT_FAST_AT_FAILURES = 1;
+/**
+ * Ok policy: consecutive failures after which a model is demoted by the
+ * ok policy. Routing keeps the declared order for demoted models.
+ */
+export const OK_POLICY_MAX_CONSECUTIVE_FAILURES = 3;
 /** Strategy identifier this module serves. */
 export const RESPONSIVE_PRIORITY_STRATEGY = "responsive-priority";
 
@@ -58,13 +80,49 @@ export interface LatencySample {
 interface SchedulerState {
   /** `provider/model` → last sample. */
   samples: Map<string, LatencySample>;
+  /** `provider/model` → consecutive failed probe count (ok=false samples). */
+  consecutiveFailures: Map<string, number>;
   timer: ReturnType<typeof setInterval> | null;
   running: Promise<void> | null;
   controller: AbortController | null;
 }
 
 function createState(): SchedulerState {
-  return { samples: new Map(), timer: null, running: null, controller: null };
+  return {
+    samples: new Map(),
+    consecutiveFailures: new Map(),
+    timer: null,
+    running: null,
+    controller: null,
+  };
+}
+
+/**
+ * Pick a per-probe timeout tier from the model's consecutive failure count so
+ * a failing tick never burns the full 15s window while still re-checking
+ * recovery on each cadence.
+ * @param {string} modelStr
+ * @param {number} [now] - Override clock (tests).
+ * @returns {number} Timeout in ms.
+ */
+export function probeTimeoutForModel(modelStr: string, now: number = Date.now()): number {
+  const failures = getState().consecutiveFailures.get(modelStr) || 0;
+  if (failures >= PROBE_TIMEOUT_DEGRADED_AT_FAILURES) return PROBE_TIMEOUT_DEGRADED_MS;
+  if (failures >= PROBE_TIMEOUT_FAST_AT_FAILURES) return PROBE_TIMEOUT_FAST_MS;
+  return PROBE_TIMEOUT_MS;
+}
+
+/**
+ * Ok-policy: whether a model should be demoted by routing because its
+ * consecutive failures exceed the threshold. Returns false for models that
+ * are healthy or below the threshold.
+ * @param {string} modelStr
+ * @param {number} [now] - Override clock (tests).
+ * @returns {boolean} true when the model is demoted by the ok policy.
+ */
+export function isModelOk(modelStr: string, now: number = Date.now()): boolean {
+  const failures = getState().consecutiveFailures.get(modelStr) || 0;
+  return failures < OK_POLICY_MAX_CONSECUTIVE_FAILURES;
 }
 
 // Survive HMR re-evaluation within a single process.
@@ -85,11 +143,18 @@ function getState(): SchedulerState {
 export function recordLatencySample(modelStr: string, sample: LatencySample): void {
   if (!modelStr || typeof modelStr !== "string") return;
   if (!Number.isFinite(sample.latencyMs) || sample.latencyMs < 0) return;
-  getState().samples.set(modelStr, {
+  const state = getState();
+  state.samples.set(modelStr, {
     latencyMs: sample.latencyMs,
     ok: sample.ok !== false,
     probedAt: Number.isFinite(sample.probedAt) ? sample.probedAt : Date.now(),
   });
+  if (sample.ok !== false) {
+    state.consecutiveFailures.delete(modelStr);
+  } else {
+    const prev = state.consecutiveFailures.get(modelStr) || 0;
+    state.consecutiveFailures.set(modelStr, prev + 1);
+  }
 }
 
 /**
@@ -119,7 +184,9 @@ export function getLatencyHealthSnapshot(now: number = Date.now()): Record<strin
  * Clear the store. Used by tests and on teardown.
  */
 export function clearLatencyHealth(): void {
-  getState().samples.clear();
+  const state = getState();
+  state.samples.clear();
+  state.consecutiveFailures.clear();
 }
 
 /**
@@ -141,10 +208,17 @@ export function orderByLatencyHealth(models: string[], now: number = Date.now())
     return Array.isArray(models) ? [...models] : [];
   }
 
+  const state = getState();
   const rank = (modelStr: string): [number, number] => {
+    const consecutiveFailures = state.consecutiveFailures.get(modelStr) || 0;
     const sample = getLatencyHealth(modelStr, now);
+    if (sample && sample.ok) return [0, sample.latencyMs];
     if (!sample) return [1, 0];
-    if (sample.ok) return [0, sample.latencyMs];
+    // Ok policy: demote models whose consecutive failures exceed the threshold,
+    // plus any sample that already failed. They keep the combo's declared order
+    // among themselves but sit at the very bottom — never dropped, never above
+    // healthy or unknown models.
+    if (consecutiveFailures >= OK_POLICY_MAX_CONSECUTIVE_FAILURES) return [2, 0];
     return [2, 0];
   };
 
@@ -280,7 +354,8 @@ export async function runProbeTick(deps: SchedulerDeps = {}): Promise<void> {
           const onOuterAbort = () => probeController.abort();
           if (controller.signal.aborted) probeController.abort();
           else controller.signal.addEventListener("abort", onOuterAbort, { once: true });
-          const timeout = setTimeout(() => probeController.abort(), PROBE_TIMEOUT_MS);
+          const probeTimeoutMs = probeTimeoutForModel(modelStr, now());
+          const timeout = setTimeout(() => probeController.abort(), probeTimeoutMs);
           try {
             const latencyMs = await probeModel(modelStr, probeController.signal);
             if (!controller.signal.aborted) {
@@ -320,6 +395,30 @@ export async function runProbeTick(deps: SchedulerDeps = {}): Promise<void> {
   });
 
   return state.running;
+}
+
+/**
+ * Catalog-prune helper (#13505 follow-up).
+ *
+ * Removes explicit combo model steps that pin a provider model missing from
+ * the provider's authoritative live catalog. Fail-open: with no authoritative
+ * catalog nothing is flagged; a combo whose every step would be pruned is left
+ * untouched so pruning never empties it; one combo's failure never blocks the
+ * rest. Gated behind the opt-in `COMBO_AUTO_PRUNE_STALE_STEPS` feature flag.
+ *
+ * Returns `{ flagged, pruned }` counts.
+ */
+export async function pruneStaleCatalogRefs(): Promise<{
+  flagged: number;
+  pruned: number;
+}> {
+  // Opt-in only; with no flag set nothing is flagged or removed.
+  if (!isStaleComboAutoPruneEnabled()) {
+    return { flagged: 0, pruned: 0 };
+  }
+  const refs = await findAllStaleComboModelRefs();
+  const pruned = await pruneStaleComboModelRefs(refs);
+  return { flagged: refs.length, pruned: pruned.length };
 }
 
 /**
