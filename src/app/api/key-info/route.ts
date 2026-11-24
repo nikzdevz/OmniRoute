@@ -52,8 +52,10 @@ function parseJsonArray(value: unknown): string[] {
 }
 
 /**
- * Extract the API key from either the `?key=` query parameter or the
- * `X-API-Key` request header.
+ * Extract the API key from any of these sources, in priority order:
+ *   1. `?key=` query parameter
+ *   2. `X-API-Key` request header
+ *   3. `Authorization: Bearer <key>` header
  */
 function extractKey(request: Request): string | null {
   const url = new URL(request.url);
@@ -62,6 +64,10 @@ function extractKey(request: Request): string | null {
 
   const headerKey = request.headers.get("x-api-key");
   if (headerKey && headerKey.trim().length > 0) return headerKey.trim();
+
+  const authHeader = request.headers.get("authorization") || "";
+  const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (bearerMatch && bearerMatch[1].trim().length > 0) return bearerMatch[1].trim();
 
   return null;
 }
