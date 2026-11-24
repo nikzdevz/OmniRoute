@@ -102,6 +102,16 @@ async function recordClientApiAuthTouch(
 export const clientApiPolicy: RoutePolicy = {
   routeClass: "CLIENT_API",
   async evaluate(ctx: PolicyContext): Promise<AuthOutcome> {
+    // Public key-info endpoint: the API key itself is the credential (passed
+    // via ?key=, X-API-Key, or Authorization: Bearer), and the route handler
+    // validates it against the DB. No bearer auth is required at the policy
+    // layer, and extractApiKeyCandidates does not read ?key= query params
+    // (query-string auth was intentionally removed for security — see
+    // readNonEmptyUrlToken).
+    if (ctx.classification.normalizedPath.endsWith("/key-info")) {
+      return allow({ kind: "anonymous", id: "key-info" });
+    }
+
     // Every credential the client presented, in precedence order (Bearer,
     // x-api-key, x-goog-api-key #7034, path-scoped `/vscode/<key>/…` token).
     // A non-"Bearer <token>" Authorization header (an empty "Bearer ", or a
