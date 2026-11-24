@@ -754,6 +754,12 @@ const nextConfig = {
         source: "/codex/:path*",
         destination: "/api/v1/responses",
       },
+      // Public key-info endpoint: /v1/api/key-info must reach /api/key-info
+      // (not /api/v1/api/key-info). Place before the generic /v1/:path* rule.
+      {
+        source: "/v1/api/key-info",
+        destination: "/api/key-info",
+      },
       {
         source: "/v1/:path*",
         destination: "/api/v1/:path*",
