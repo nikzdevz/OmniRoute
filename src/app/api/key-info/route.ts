@@ -10,15 +10,10 @@
  */
 
 import { NextResponse } from "next/server";
+import { getApiKeyById, getApiKeyMetadata } from "@/lib/db/apiKeys";
 import { getDbInstance } from "@/lib/db/core";
 
 type JsonRecord = Record<string, unknown>;
-
-function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
-}
 
 function toNumber(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -37,18 +32,6 @@ function toBoolean(value: unknown): boolean {
   if (value === true || value === 1 || value === "1") return true;
   if (value === false || value === 0 || value === "0") return false;
   return false;
-}
-
-function parseJsonArray(value: unknown): string[] {
-  if (!value || typeof value !== "string" || value.trim() === "") return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed)
-      ? parsed.filter((e): e is string => typeof e === "string")
-      : [];
-  } catch {
-    return [];
-  }
 }
 
 /**
@@ -78,7 +61,13 @@ function extractKey(request: Request): string | null {
 function classifyStrategy(
   tokenLimits: JsonRecord | null,
   quotaLimits: JsonRecord | null,
-  apiKeyRow: JsonRecord
+  metadata: {
+    isActive: boolean;
+    revokedAt: string | null;
+    expiresAt: string | null;
+    maxRequestsPerDay: number | null;
+    maxRequestsPerMinute: number | null;
+  }
 ): {
   strategy: string;
   isUnlimited: boolean;
@@ -89,8 +78,8 @@ function classifyStrategy(
   resetTime: string | null;
   quotaWindow: string | null;
 } {
-  const isActive = toBoolean(apiKeyRow.is_active);
-  const revokedAt = toStringOrNull(apiKeyRow.revoked_at);
+  const isActive = metadata.isActive;
+  const revokedAt = metadata.revokedAt;
 
   if (!isActive || revokedAt) {
     return {
@@ -182,8 +171,8 @@ function classifyStrategy(
   }
 
   // 3) Request-based limits on the key itself
-  const maxReqDay = toNumber(apiKeyRow.max_requests_per_day);
-  const maxReqMin = toNumber(apiKeyRow.max_requests_per_minute);
+  const maxReqDay = toNumber(metadata.maxRequestsPerDay);
+  const maxReqMin = toNumber(metadata.maxRequestsPerMinute);
   if (maxReqDay && maxReqDay > 0) {
     return {
       strategy: "quota-based",
@@ -210,7 +199,7 @@ function classifyStrategy(
   }
 
   // 4) No limits at all — check expiry
-  const expiresAt = toStringOrNull(apiKeyRow.expires_at);
+  const expiresAt = metadata.expiresAt;
   if (expiresAt) {
     return {
       strategy: "unlimited but days defined",
@@ -251,18 +240,20 @@ export async function GET(request: Request): Promise<Response> {
 
   try {
     const db = getDbInstance();
-    const dbRec = db as unknown as { prepare: (sql: string) => JsonRecord };
+    const dbRec = db as unknown as {
+      prepare: (sql: string) => { get: (...args: unknown[]) => unknown };
+    };
 
-    // Look up the key row directly by the key string
-    const keyRow = dbRec
-      .prepare("SELECT * FROM api_keys WHERE key = ?")
-      .get(apiKey) as JsonRecord | undefined;
-
-    if (!keyRow) {
+    // Identity via the hot-path lookup: `getApiKeyMetadata` resolves by SHA-256
+    // `key_hash` (the plaintext `key` column is encrypted at rest, `enc:v1:…`,
+    // so a raw-string lookup can never match — this was the original 404).
+    // It also backfills legacy rows without a hash on lookup miss.
+    const metadata = await getApiKeyMetadata(apiKey, { bypassCache: true });
+    if (!metadata) {
       return NextResponse.json({ error: "API key not found" }, { status: 404 });
     }
 
-    const apiKeyId = keyRow.id as string;
+    const apiKeyId = metadata.id;
 
     // Token limits
     const tokenLimits = dbRec
@@ -291,7 +282,7 @@ export async function GET(request: Request): Promise<Response> {
         total_requests?: number;
       };
 
-    const strategyInfo = classifyStrategy(tokenLimits, quotaLimits, keyRow);
+    const strategyInfo = classifyStrategy(tokenLimits, quotaLimits, metadata);
 
     const tokensUsed = toNumber(tokenCounters?.tokens_used);
     const tokensLimit = strategyInfo.tokenLimit;
@@ -302,19 +293,18 @@ export async function GET(request: Request): Promise<Response> {
         ? Math.round((tokensUsed / tokensLimit) * 10000) / 100
         : null;
 
-    // Merge allowed_models and allowed_combos
-    const allowedModels = parseJsonArray(keyRow.allowed_models);
-    const allowedCombos = parseJsonArray(keyRow.allowed_combos);
-    const mergedModels = [...new Set([...allowedModels, ...allowedCombos])];
+    // Merge allowed_models and allowed_combos (metadata parsers already
+    // decoded the JSON columns)
+    const mergedModels = [...new Set([...metadata.allowedModels, ...metadata.allowedCombos])];
 
-    const rateLimits = parseJsonArray(keyRow.rate_limits);
+    const keyRowById = await getApiKeyById(apiKeyId, { readOnly: true });
 
     return NextResponse.json({
-      key_name: keyRow.name || null,
-      is_active: toBoolean(keyRow.is_active),
-      created_at: keyRow.created_at || null,
-      expires_at: keyRow.expires_at || null,
-      last_used_at: keyRow.last_used_at || null,
+      key_name: metadata.name || null,
+      is_active: metadata.isActive,
+      created_at: keyRowById?.createdAt || null,
+      expires_at: metadata.expiresAt || null,
+      last_used_at: keyRowById?.lastUsedAt || null,
       is_unlimited: strategyInfo.isUnlimited,
       has_token_limit: strategyInfo.hasTokenLimit,
       has_quota_window: strategyInfo.hasQuotaWindow,
@@ -325,7 +315,7 @@ export async function GET(request: Request): Promise<Response> {
       tokens_used: tokensUsed,
       token_remaining: tokensRemaining,
       usage_percentage: usagePercent,
-      rate_limit: rateLimits.length > 0 ? rateLimits : null,
+      rate_limit: metadata.rateLimits?.length ? metadata.rateLimits : null,
       tpm_limit: toNumber(quotaLimits?.tpm_limit) || null,
       rpm_limit: toNumber(quotaLimits?.rpm_limit) || null,
       allowed_models: mergedModels,
