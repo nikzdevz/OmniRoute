@@ -2,6 +2,47 @@
 const CHARS_PER_TOKEN_SCHEMA = 6; // ~6 chars/token for JSON schemas (more verbose per token)
 
 /**
+ * Cheap identity signature for a request body.
+ *
+ * The streaming pipeline resolves usage many times for the same request: the
+ * passthrough sanitizer, the stream accounting getter and the partial-usage
+ * reader all call back into the estimator, once per upstream chunk. Re-running
+ * `JSON.stringify` and the token-boundary split over a multi-hundred-KB agent
+ * payload costs tens of milliseconds per call and blocks the single Node event
+ * loop, which stalls every concurrent request (measured on a live agent
+ * workload: 85% of process CPU inside this estimator).
+ *
+ * The body object is stable for the life of a request, so callers cache their
+ * result against it. This signature detects the mutations that actually happen
+ * (a message appended, tools added, a prompt string replaced or resized) and
+ * forces a recomputation instead of serving a stale number.
+ */
+export type BodyShape = {
+  messages: number;
+  tools: number;
+  promptChars: number;
+};
+
+export function getBodyShape(record: Record<string, unknown>): BodyShape {
+  const messages = Array.isArray(record.messages) ? record.messages.length : -1;
+  const tools = Array.isArray(record.tools) ? record.tools.length : -1;
+  let promptChars = 0;
+  for (const key of ["input", "prompt", "system", "instructions"] as const) {
+    const value = record[key];
+    if (typeof value === "string") promptChars += value.length;
+    else if (Array.isArray(value)) promptChars += value.length;
+  }
+  return { messages, tools, promptChars };
+}
+
+function sameShape(a: BodyShape, b: BodyShape): boolean {
+  return a.messages === b.messages && a.tools === b.tools && a.promptChars === b.promptChars;
+}
+
+type InputEstimateCacheEntry = BodyShape & { tokens: number };
+const inputEstimateCache = new WeakMap<object, InputEstimateCacheEntry>();
+
+/**
  * Improved token estimation heuristic (no dependency).
  * Splits text on common token boundaries (whitespace, punctuation, camelCase)
  * and applies a sub-word correction factor. Better accuracy for:
@@ -43,7 +84,11 @@ function estimateTokenCount(text: unknown) {
 export function estimateInputTokens(body: unknown) {
   if (!body || typeof body !== "object") return 0;
   const record = body as Record<string, unknown>;
+  const shape = getBodyShape(record);
+  const cached = inputEstimateCache.get(body);
+  if (cached && sameShape(cached, shape)) return cached.tokens;
 
+  let tokens = 0;
   try {
     let toolTokens = 0;
     let messageTokens = 0;
@@ -59,11 +104,14 @@ export function estimateInputTokens(body: unknown) {
       messageTokens = estimateTokenCount(JSON.stringify(record));
     }
 
-    return messageTokens + toolTokens;
+    tokens = messageTokens + toolTokens;
   } catch {
     // Fallback if stringify fails
-    return 0;
+    tokens = 0;
   }
+
+  inputEstimateCache.set(body, { ...shape, tokens });
+  return tokens;
 }
 
 /**

@@ -22,7 +22,12 @@ import {
   withoutInvalidCacheCounters,
   type UsageEvidence,
 } from "./usageEvidence.ts";
-import { estimateInputTokens, estimateOutputTokens } from "./usageEstimation.ts";
+import {
+  estimateInputTokens,
+  estimateOutputTokens,
+  getBodyShape,
+  type BodyShape,
+} from "./usageEstimation.ts";
 export { estimateInputTokens, estimateOutputTokens } from "./usageEstimation.ts";
 export { pickCacheCreationTokens };
 
@@ -487,15 +492,37 @@ function hasRemoteContextReference(value: unknown, depth = 0): boolean {
   return false;
 }
 
+type SerializedBodyBytesCacheEntry = BodyShape & { bytes: number | null };
+const serializedBodyBytesCache = new WeakMap<object, SerializedBodyBytesCacheEntry>();
+
+/**
+ * Serializing the request body runs on every plausibility check, and the streaming
+ * pipeline performs one per upstream chunk. A multi-hundred-KB agent payload then
+ * costs tens of milliseconds per chunk on the single Node event loop, so cache the
+ * measured size per body object and reuse it while the body keeps its shape.
+ */
 function getSerializedBodyBytes(body: unknown): number | null {
   if (!body || typeof body !== "object" || hasRemoteContextReference(body)) return null;
+  const record = body as Record<string, unknown>;
+  const shape = getBodyShape(record);
+  const cached = serializedBodyBytesCache.get(body);
+  if (
+    cached &&
+    cached.messages === shape.messages &&
+    cached.tools === shape.tools &&
+    cached.promptChars === shape.promptChars
+  ) {
+    return cached.bytes;
+  }
+  let bytes: number | null = null;
   try {
     const serialized = JSON.stringify(body);
-    if (!serialized) return null;
-    return Buffer.byteLength(serialized, "utf8");
+    if (serialized) bytes = Buffer.byteLength(serialized, "utf8");
   } catch {
-    return null;
+    bytes = null;
   }
+  serializedBodyBytesCache.set(body, { ...shape, bytes });
+  return bytes;
 }
 
 function tokenNumber(value: unknown): number {
