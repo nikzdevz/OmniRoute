@@ -37,7 +37,8 @@ export type StrategyOrderingKind =
   | "headroom"
   | "quota-weighted"
   | "quota-share"
-  | "responsive-priority";
+  | "responsive-priority"
+  | "speed-combo";
 
 export interface StrategyTraits {
   /** Target-ordering stage run before continuity filters (applyStrategyOrdering / auto). */
@@ -195,6 +196,21 @@ const STRATEGY_TRAIT_OVERRIDES: Record<AnyRoutingStrategyValue, StrategyTraitOve
   // missing probe data degrades to the operator-declared order.
   "responsive-priority": {
     ordering: "responsive-priority",
+    runtimeUnitOrder: "declared",
+    honorsFallbackOnlyTargets: true,
+    stickinessRespectsDeclaredOrder: true,
+    preScreensTargets: true,
+    promptCacheAffinityScope: "model",
+    protectsFirstTargetFromAffinity: true,
+  },
+  // Speed-combo: priority semantics re-ordered by the fused speed/reliability/
+  // RPM score (services/speedCombo.ts) — fresh probe TTFB blended with
+  // real-traffic success and 429 ratios; hard reliability signals (breaker,
+  // lockout, repeated probe failures) demote to the bottom bucket. Cold data
+  // degrades to the operator-declared order; combo-ref units run declared, so
+  // fallback combos chain on total failure.
+  "speed-combo": {
+    ordering: "speed-combo",
     runtimeUnitOrder: "declared",
     honorsFallbackOnlyTargets: true,
     stickinessRespectsDeclaredOrder: true,

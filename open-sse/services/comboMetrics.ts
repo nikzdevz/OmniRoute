@@ -5,6 +5,7 @@
  */
 
 import { recordProviderUsage } from "./autoCombo/providerDiversity";
+import { recordPendingFallbackEvent } from "./comboSpeedStatsFlush";
 
 interface ModelMetrics {
   requests: number;
@@ -303,6 +304,9 @@ export function recordComboRequest(
   combo.totalLatencyMs += latencyMs;
   combo.totalFallbacks += fallbackCount;
   if (fallbackCount > 0) combo.requestsWithFallback++;
+  // Persist the same increments as hourly rollups (combo_fallback_stats via the
+  // speed-stats flusher); in-memory and never throws, so routing is unaffected.
+  if (fallbackCount > 0) recordPendingFallbackEvent(comboName, fallbackCount, 1);
   combo.lastUsedAt = usedAt;
   combo.strategy = strategy;
 

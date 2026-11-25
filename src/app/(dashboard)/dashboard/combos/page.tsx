@@ -202,6 +202,8 @@ const STRATEGY_DESC_FALLBACK = {
     "Quota remaining and reset windows decide the order; similar scores rotate round-robin.",
   "responsive-priority":
     "Priority routing re-ordered by live measured latency — the fastest healthy model is tried first.",
+  "speed-combo":
+    "Speed routing that fuses live probes, real traffic and rate-limit signals — the fastest actually-working model is tried first, then the remaining models, then fallback combos.",
 };
 
 const STRATEGY_GUIDANCE_FALLBACK = {
@@ -295,6 +297,14 @@ const STRATEGY_GUIDANCE_FALLBACK = {
       "Avoid when you need deterministic ordering or when probing every 30s is undesirable on noisy networks.",
     example:
       "Example: Several fast API providers where you always want the lowest-latency one first.",
+  },
+  "speed-combo": {
+    when:
+      "Use when you want the fastest model that is actually working — probe speed, real-traffic success and rate-limit pressure are fused into one ranking, and fallback combos chain when a whole model family is down.",
+    avoid:
+      "Avoid when deterministic operator order matters more than speed, or when probe traffic (one 1-token request per model every 30s) is unacceptable.",
+    example:
+      "Example: A Fable combo plus a flagship fallback combo — Sonnet usually wins on fused speed; when its provider hits RPM limits an equivalent model takes over, and if every model fails the request cascades to the flagship combo.",
   },
 };
 

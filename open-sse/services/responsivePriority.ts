@@ -253,8 +253,17 @@ export interface SchedulerDeps {
 }
 
 /**
- * Collect the unique model strings that back every `responsive-priority` combo.
- * Nested combos are flattened so shared leaf models are probed only once.
+ * Strategies whose backing models this probe scheduler serves. Both orderers
+ * read the same latency health store: `responsive-priority` orders by probe
+ * TTFB alone, `speed-combo` fuses the probe sample with real-traffic EWMA and
+ * reliability signals (services/speedCombo.ts).
+ */
+const PROBED_STRATEGIES = new Set<string>([RESPONSIVE_PRIORITY_STRATEGY, "speed-combo"]);
+
+/**
+ * Collect the unique model strings that back every latency-health-probed
+ * combo (`responsive-priority` and `speed-combo`). Nested combos are
+ * flattened so shared leaf models are probed only once.
  *
  * @param {Array} combos - All combos from the DB.
  * @returns {string[]} Unique model strings.
@@ -266,7 +275,7 @@ export function collectResponsivePriorityModels(
   const seen = new Set<string>();
 
   for (const combo of all) {
-    if (!combo || combo.strategy !== RESPONSIVE_PRIORITY_STRATEGY) continue;
+    if (!combo || !PROBED_STRATEGIES.has(combo.strategy as string)) continue;
     const flat = resolveNestedComboModels(combo as ComboLike, all as ComboLike[]);
     for (const modelStr of flat) {
       if (typeof modelStr === "string" && modelStr) seen.add(modelStr);

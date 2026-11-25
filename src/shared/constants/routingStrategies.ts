@@ -22,6 +22,7 @@ export const ROUTING_STRATEGY_VALUES = [
   "pipeline",
   "jev",
   "responsive-priority",
+  "speed-combo",
 ] as const;
 
 export type RoutingStrategyValue = (typeof ROUTING_STRATEGY_VALUES)[number];
@@ -252,6 +253,13 @@ export const ROUTING_STRATEGIES: RoutingStrategyOption[] = [
     combosDescKey: "responsivePriorityDesc",
     settingsDescKey: "responsivePriorityDesc",
     icon: "speed",
+  },
+  {
+    value: "speed-combo",
+    labelKey: "speedCombo",
+    combosDescKey: "speedComboDesc",
+    settingsDescKey: "speedComboDesc",
+    icon: "bolt",
   },
 ];
 

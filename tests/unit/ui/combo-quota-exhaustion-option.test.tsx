@@ -80,12 +80,26 @@ describe("combo quota-only fallback state", () => {
     expect(renderOptions("weighted", model("openai/first")).querySelector("input")).toBeNull();
   });
 
-  it("forces execute only for active priority combo refs and preserves dormant config", () => {
+  it("forces execute for active priority combo refs and preserves dormant config", () => {
     const protectedRef = setQuotaOnlyFallback([comboRef()], 0, true);
     expect(applyQuotaOnlyFallbackConfig("priority", protectedRef, {})).toEqual({
       nestedComboMode: "execute",
     });
     expect(applyQuotaOnlyFallbackConfig("weighted", protectedRef, {})).toEqual({});
     expect(applyQuotaOnlyFallbackConfig("priority", [model("openai/first")], {})).toEqual({});
+  });
+
+  it("speed-combo forces execute for any combo-ref step (fallback combos chain as units)", () => {
+    expect(applyQuotaOnlyFallbackConfig("speed-combo", [model("openai/first"), comboRef()], {})).toEqual(
+      { nestedComboMode: "execute" }
+    );
+    // An explicit flatten is overridden: the cascade requires execute mode.
+    expect(
+      applyQuotaOnlyFallbackConfig("speed-combo", [comboRef()], {
+        nestedComboMode: "flatten",
+      })
+    ).toEqual({ nestedComboMode: "execute" });
+    // Pure-model speed combos keep their config untouched.
+    expect(applyQuotaOnlyFallbackConfig("speed-combo", [model("openai/first")], {})).toEqual({});
   });
 });

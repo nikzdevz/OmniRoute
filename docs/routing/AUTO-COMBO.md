@@ -326,7 +326,7 @@ resolved values feed the engine's existing `config.modePack` / `config.budgetCap
 
 ## All Routing Strategies
 
-OmniRoute's combo engine supports **22 routing strategies** (declared in `src/shared/constants/routingStrategies.ts` → `ROUTING_STRATEGY_VALUES`). The Auto Combo engine itself is exposed under the `auto` strategy; the others are available for persisted combos.
+OmniRoute's combo engine supports **24 routing strategies** (declared in `src/shared/constants/routingStrategies.ts` → `ROUTING_STRATEGY_VALUES`). The Auto Combo engine itself is exposed under the `auto` strategy; the others are available for persisted combos.
 
 | Strategy            | Description                                                                                                                                                                                          |
 | :------------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -352,6 +352,8 @@ OmniRoute's combo engine supports **22 routing strategies** (declared in `src/sh
 | `fusion` 🧬         | Fan out to a panel of models in parallel, then synthesize one answer via a judge (see below)                                                                                                         |
 | `pipeline`          | Run targets sequentially, threading each step's output into the next step's input; only the final answer is returned (#6396)                                                                         |
 | `jev`               | User-ranked preference list; TypeSafe Jev admits which entries run for this request. Winner first, other admitted targets keep user order. Falls open to user order when Jev is unavailable (#15276) |
+| `responsive-priority` | Priority order re-ranked by live measured latency: a 30s background probe measures per-model TTFB and the fastest healthy model is tried first; failing probes demote, cold data keeps the declared order (`open-sse/services/responsivePriority.ts`) |
+| `speed-combo`       | Fused speed ranking: fresh probe TTFB blended with real-traffic success/TTFT EWMA and 429 ratios, with breaker/lockout/probe failures demoted to the bottom — the fastest actually-working model is tried first, then the remaining models, then fallback combos (`open-sse/services/speedCombo.ts`) |
 
 ⭐ = New in v3.8.0 · 🧬 = New in v3.8.36
 
@@ -968,5 +970,5 @@ intentionally excluded from CI because they require live credentials and VPS acc
 | `open-sse/services/autoCombo/autoPrefix.ts`               | `auto/` prefix parser + 6 variants                                                                        |
 | `open-sse/services/autoCombo/virtualFactory.ts`           | Builds in-memory `AutoComboConfig` from live connections                                                  |
 | `open-sse/services/autoCombo/providerRegistryAccessor.ts` | Test hook for mocking provider registry                                                                   |
-| `src/shared/constants/routingStrategies.ts`               | `ROUTING_STRATEGY_VALUES` (22 strategies)                                                                 |
+| `src/shared/constants/routingStrategies.ts`               | `ROUTING_STRATEGY_VALUES` (24 strategies)                                                                 |
 | `src/sse/handlers/chat.ts`                                | Integration: auto-prefix short-circuit                                                                    |

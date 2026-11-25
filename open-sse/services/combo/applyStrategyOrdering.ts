@@ -24,6 +24,7 @@ import {
 import { decrementInflight } from "./quotaShareInflight.ts";
 import { getStrategyTraits, type StrategyOrderingKind } from "./strategyRegistry.ts";
 import { orderByLatencyHealth } from "../responsivePriority.ts";
+import { orderBySpeedHealth } from "../speedCombo.ts";
 import type { PreDispatchExclusion } from "./pinRecovery.ts";
 import type { ComboLike, ComboLogger, ResolvedComboTarget } from "./types.ts";
 
@@ -400,6 +401,26 @@ const STRATEGY_ORDERERS: Record<
       log.info(
         "COMBO",
         `Responsive-priority ordering: no fresh latency data, keeping priority order (${nextTargets[0]?.modelStr})`
+      );
+    }
+    return orderedOnly(nextTargets);
+  },
+  "speed-combo": (orderedTargets, { log }) => {
+    // Fused speed/reliability/RPM ordering (services/speedCombo.ts): scored
+    // targets ascending by fused effective latency, unknown targets keep
+    // declared position, hard-demoted targets (probe failures, open breaker,
+    // model lockout) go last. Pure permutation like responsive-priority: the
+    // attempt loop below keeps the full fallback chain either way.
+    const nextTargets = orderBySpeedHealth(orderedTargets);
+    if (nextTargets[0]?.modelStr !== orderedTargets[0]?.modelStr) {
+      log.info(
+        "COMBO",
+        `Speed-combo ordering: fastest healthy model first (${nextTargets[0]?.modelStr})`
+      );
+    } else {
+      log.info(
+        "COMBO",
+        `Speed-combo ordering: keeping declared order (${nextTargets[0]?.modelStr})`
       );
     }
     return orderedOnly(nextTargets);

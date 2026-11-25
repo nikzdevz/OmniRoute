@@ -11,6 +11,7 @@ import Button from "@/shared/components/Button";
 import Card from "@/shared/components/Card";
 import SegmentedControl from "@/shared/components/SegmentedControl";
 import { CardSkeleton } from "@/shared/components/Loading";
+import SpeedAnalyticsCard from "./SpeedAnalyticsCard";
 import {
   extractComboRuntimeConfig,
   getComboControlCenterTargets,
@@ -669,6 +670,8 @@ export default function ComboControlCenterClient({ comboId }: { comboId: string 
       </div>
 
       {probe && <LiveProbePanel probe={probe} />}
+
+      <SpeedAnalyticsCard comboName={combo.name} />
 
       <Card className="p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">

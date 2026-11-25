@@ -14,6 +14,12 @@ export function setQuotaOnlyFallback(
 }
 
 export function requiresExecuteMode(strategy: string, entries: ComboStep[]): boolean {
+  // Speed-combo chains fallback combos: a combo-ref step must run as a unit
+  // (its own strategy, its own retries) so the series-of-models → series-of-
+  // combos cascade keeps working when the builder saves the combo.
+  if (strategy === "speed-combo" && entries.some((entry) => entry.kind === "combo-ref")) {
+    return true;
+  }
   return (
     strategy === "priority" &&
     entries.some(

@@ -693,7 +693,20 @@ export async function registerNodejs(): Promise<void> {
     }
   };
 
-  initGracefulShutdown([responsivePriorityStopHook]);
+  const comboSpeedStatsStopHook = async () => {
+    try {
+      const { stopComboSpeedStatsFlusher } =
+        await import("@omniroute/open-sse/services/comboSpeedStatsFlush.ts");
+      await stopComboSpeedStatsFlusher();
+    } catch (err) {
+      console.warn(
+        "[STARTUP] Could not capture stop handler:",
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+  };
+
+  initGracefulShutdown([responsivePriorityStopHook, comboSpeedStatsStopHook]);
   initApiBridgeServer();
   startSpendBatchWriter();
   registerDefaultGuardrails();
@@ -750,6 +763,16 @@ export async function registerNodejs(): Promise<void> {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn("[STARTUP] Could not start responsive-priority scheduler:", msg);
+    }
+
+    try {
+      const { startComboSpeedStatsFlusher } =
+        await import("@omniroute/open-sse/services/comboSpeedStatsFlush.ts");
+      startComboSpeedStatsFlusher();
+      console.log("[STARTUP] Combo speed-stats flusher started");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[STARTUP] Could not start combo speed-stats flusher:", msg);
     }
   }
 

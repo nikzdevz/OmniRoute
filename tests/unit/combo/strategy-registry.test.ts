@@ -4,7 +4,7 @@
  * The combo pipeline used to branch on raw string comparisons of the strategy name
  * scattered across ~12 slices. Those decisions now live in a typed trait registry
  * (`open-sse/services/combo/strategyRegistry.ts`). This suite pins:
- *   1. coverage — every canonical strategy (21 public + internal `quota-share`) has an
+ *   1. coverage — every canonical strategy (23 public + internal `quota-share`) has an
  *      entry, and the known-symbols gate's HANDLED_COMBO_STRATEGIES is derived from it;
  *   2. the safe default — an unknown strategy resolves to the exact fall-through of the
  *      former `else` chains (prototype keys included);
@@ -123,8 +123,8 @@ const LEGACY_DECISIONS: { [K in keyof StrategyTraits]: (s: string) => StrategyTr
   contextRelay: (s) => s === "context-relay",
 };
 
-test("registry covers every canonical strategy (22 public + quota-share) and nothing else", () => {
-  assert.equal(CANONICAL.length, 23);
+test("registry covers every canonical strategy (24 public + quota-share) and nothing else", () => {
+  assert.equal(CANONICAL.length, 25);
   assert.deepEqual([...REGISTERED_COMBO_STRATEGIES].sort(), [...CANONICAL].sort());
   for (const strategy of CANONICAL) {
     assert.ok(Object.hasOwn(COMBO_STRATEGY_REGISTRY, strategy), `missing ${strategy}`);
@@ -160,9 +160,11 @@ test("registry entries are frozen", () => {
 });
 
 test("parity: each trait reproduces the pre-refactor decision for every strategy", () => {
-  // expiry-first has no pre-refactor literal-comparison decision to reproduce — it
-  // enters the codebase with the registry already in place, so parity excludes it.
-  const preExisting = CANONICAL.filter((s) => s !== "expiry-first");
+  // Strategies born with the registry already in place have no pre-refactor
+  // literal-comparison decision to reproduce — parity excludes them; their
+  // traits are pinned by dedicated tests below instead.
+  const registryEra = new Set(["expiry-first", "responsive-priority", "speed-combo"]);
+  const preExisting = CANONICAL.filter((s) => !registryEra.has(s));
   for (const strategy of [...preExisting, ...UNKNOWN]) {
     const traits = getStrategyTraits(strategy);
     for (const [trait, legacy] of Object.entries(LEGACY_DECISIONS)) {
@@ -185,6 +187,64 @@ test("expiry-first traits: dedicated ordering, first pick protected, everything 
       traits[key],
       DEFAULT_STRATEGY_TRAITS[key],
       `expiry-first.${key} must stay at the registry default`
+    );
+  }
+});
+
+test("responsive-priority traits: probe-latency ordering with priority semantics", () => {
+  const traits = getStrategyTraits("responsive-priority");
+  assert.equal(traits.ordering, "responsive-priority");
+  assert.equal(traits.runtimeUnitOrder, "declared");
+  assert.equal(traits.honorsFallbackOnlyTargets, true);
+  assert.equal(traits.stickinessRespectsDeclaredOrder, true);
+  assert.equal(traits.preScreensTargets, true);
+  assert.equal(traits.promptCacheAffinityScope, "model");
+  assert.equal(traits.protectsFirstTargetFromAffinity, true);
+  for (const key of Object.keys(DEFAULT_STRATEGY_TRAITS) as (keyof StrategyTraits)[]) {
+    if (
+      key === "ordering" ||
+      key === "runtimeUnitOrder" ||
+      key === "honorsFallbackOnlyTargets" ||
+      key === "stickinessRespectsDeclaredOrder" ||
+      key === "preScreensTargets" ||
+      key === "promptCacheAffinityScope" ||
+      key === "protectsFirstTargetFromAffinity"
+    ) {
+      continue;
+    }
+    assert.equal(
+      traits[key],
+      DEFAULT_STRATEGY_TRAITS[key],
+      `responsive-priority.${key} must stay at the registry default`
+    );
+  }
+});
+
+test("speed-combo traits: fused speed ordering with priority semantics", () => {
+  const traits = getStrategyTraits("speed-combo");
+  assert.equal(traits.ordering, "speed-combo");
+  assert.equal(traits.runtimeUnitOrder, "declared");
+  assert.equal(traits.honorsFallbackOnlyTargets, true);
+  assert.equal(traits.stickinessRespectsDeclaredOrder, true);
+  assert.equal(traits.preScreensTargets, true);
+  assert.equal(traits.promptCacheAffinityScope, "model");
+  assert.equal(traits.protectsFirstTargetFromAffinity, true);
+  for (const key of Object.keys(DEFAULT_STRATEGY_TRAITS) as (keyof StrategyTraits)[]) {
+    if (
+      key === "ordering" ||
+      key === "runtimeUnitOrder" ||
+      key === "honorsFallbackOnlyTargets" ||
+      key === "stickinessRespectsDeclaredOrder" ||
+      key === "preScreensTargets" ||
+      key === "promptCacheAffinityScope" ||
+      key === "protectsFirstTargetFromAffinity"
+    ) {
+      continue;
+    }
+    assert.equal(
+      traits[key],
+      DEFAULT_STRATEGY_TRAITS[key],
+      `speed-combo.${key} must stay at the registry default`
     );
   }
 });

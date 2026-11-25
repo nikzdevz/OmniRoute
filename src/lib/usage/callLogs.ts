@@ -21,6 +21,7 @@ import {
 } from "@omniroute/open-sse/utils/cacheWriteUsage.ts";
 import { estimateApiEquivalentCacheWrite } from "./cacheWriteEstimate";
 import { failPendingCallLogDetail, publishPendingCallLogDetail } from "../db/callLogDetails";
+import { recordComboSpeedStat } from "../db/comboSpeedStats";
 import { applyNodePrefix, resolveProviderDisplay } from "./callLogDisplay";
 export { applyNodePrefix, resolveProviderDisplay } from "./callLogDisplay";
 import { dashboardDetailIo, resolveCallLogDetail } from "./callLogDetailResolver";
@@ -916,6 +917,28 @@ function insertCallLogRow(prepared: PreparedCallLogRow): void {
   // INSERT, so a failed write (or a second persistence of the same
   // attempt) keeps the summary instead of silently writing NULL.
   if (!prepared.metadataOnly) resetResilienceActions();
+
+  // Per-combo speed/reliability rollup (combo_speed_stats, migration 243) for
+  // combo-routed attempts. Best-effort: a failure here must never break the
+  // request log itself.
+  if (typeof logEntry.comboName === "string" && logEntry.comboName.length > 0) {
+    try {
+      recordComboSpeedStat({
+        comboName: logEntry.comboName,
+        stepId: toStringOrNull(logEntry.comboStepId),
+        executionKey: toStringOrNull(logEntry.comboExecutionKey),
+        provider: typeof logEntry.provider === "string" ? logEntry.provider : null,
+        model: typeof logEntry.model === "string" ? logEntry.model : "-",
+        connectionId: typeof logEntry.connectionId === "string" ? logEntry.connectionId : null,
+        status: Number(logEntry.status) || 0,
+        ttftMs: typeof logEntry.ttftMs === "number" ? logEntry.ttftMs : null,
+        durationMs: typeof logEntry.duration === "number" ? logEntry.duration : null,
+        timestamp: Date.parse(String(logEntry.timestamp ?? "")),
+      });
+    } catch {
+      // Rollups are optional analytics; never fail the call-log insert path.
+    }
+  }
 }
 
 /** Write the inserted row's artifact and publish it, or make the row terminal missing. */
