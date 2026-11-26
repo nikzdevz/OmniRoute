@@ -4,7 +4,7 @@
  * The `responsive-priority` combo strategy orders a combo's models by their
  * *measured* upstream latency health. This module owns two concerns:
  *
- *  1. An in-memory latency health store with a short TTL (60s) that maps a
+ *  1. An in-memory latency health store with a short TTL (180s) that maps a
  *     `provider/model` string to the last real probe result.
  *  2. A background scheduler that runs *minimal real generation probes* every
  *     30s for the models that back `responsive-priority` combos, deduplicated
@@ -25,7 +25,8 @@
  *  - The ok policy demotes a model once its consecutive failures exceed a
  *    threshold; demoted models go to the very bottom of the ordering, below
  *    healthy and unknown models, but are never dropped.
- *  - TTL is 60s. Stale or missing samples fall back to the combo's existing
+ *  - TTL is 180s (a full sweep takes minutes; see LATENCY_TTL_MS). Stale or
+ *    missing samples fall back to the combo's existing
  *    priority order, so routing never depends on absent data.
  *
  * Import-safe: nothing runs on import. The scheduler is started explicitly from
@@ -42,15 +43,22 @@ import { isStaleComboAutoPruneEnabled } from "../../src/lib/combos/staleModelPru
 
 /** Probe cadence (ms). */
 export const PROBE_INTERVAL_MS = 30_000;
-/** Latency sample freshness window (ms). */
-export const LATENCY_TTL_MS = 60_000;
-/** Max concurrent probes per tick (bounded).
- *  Bumped to 6 (from 3) so a full sweep of ~260 unique models fits inside the
- *  60s freshness window now that probes are 1-token streaming (TTFB) instead of
- *  64-token full completions. At concurrency 3 a sweep took tens of minutes
- *  and most samples were always stale — the root cause of "not all models get
- *  probed". */
-export const PROBE_CONCURRENCY = 6;
+/**
+ * Latency sample freshness window (ms). 180s: a full sweep across every
+ * model of every probed combo (277+ unique targets at 12-way concurrency)
+ * takes minutes, so a 60s TTL let early-sweep models — the Claude combos
+ * sort first alphabetically — go stale before a sweep finished and the
+ * dashboard read "no probe yet" for exactly the models operators watch.
+ */
+export const LATENCY_TTL_MS = 180_000;
+/**
+ * Max concurrent probes per tick (bounded).
+ *  Bumped 6 → 12 so a sweep of ~277 unique models (speed-combo + responsive
+ *  priority combos, slow 5-15s Claude/opus TTFBs included) completes well
+ *  inside the 180s freshness window. Each probe is one 1-token completion;
+ *  12 concurrent tiny requests per provider pool is trivial load.
+ */
+export const PROBE_CONCURRENCY = 12;
 /** Per-probe hard timeout (ms) so a hung upstream cannot stall the tick. */
 export const PROBE_TIMEOUT_MS = 15_000;
 /** Timeout (ms) for a model that has failed once consecutively. */

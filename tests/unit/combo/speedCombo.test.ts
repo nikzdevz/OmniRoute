@@ -172,9 +172,9 @@ test("orderBySpeedHealth is a pure permutation of its input", () => {
   assert.equal(ordered.length, targets.length);
 });
 
-test("stale probe (older than 60s TTL) reads as unknown, not scored", () => {
+test("stale probe (older than the 180s TTL) reads as unknown, not scored", () => {
   resetStores();
-  recordLatencySample("p/a", { latencyMs: 300, ok: true, probedAt: NOW - 120_000 });
+  recordLatencySample("p/a", { latencyMs: 300, ok: true, probedAt: NOW - 300_000 });
   const entry = evaluateSpeedHealth(target("p/a"), NOW);
   assert.equal(entry.bucket, 1);
   assert.equal(entry.probeLatencyMs, null);

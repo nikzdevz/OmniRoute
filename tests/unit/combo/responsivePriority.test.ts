@@ -107,7 +107,7 @@ test("orderByLatencyHealth: ok=false sample sorts last but never dropped", () =>
 test("getLatencyHealth: expired sample returns null", () => {
   clearLatencyHealth();
   const now = 1000;
-  recordLatencySample("openai/gpt-4o", { latencyMs: 100, ok: true, probedAt: now - 70_000 });
+  recordLatencySample("openai/gpt-4o", { latencyMs: 100, ok: true, probedAt: now - 190_000 });
   assert.equal(getLatencyHealth("openai/gpt-4o", now), null);
 });
 
@@ -126,7 +126,7 @@ test("snapshot only returns fresh samples", () => {
   clearLatencyHealth();
   const now = 1000;
   recordLatencySample("fresh", { latencyMs: 10, ok: true, probedAt: now - 100 });
-  recordLatencySample("stale", { latencyMs: 10, ok: true, probedAt: now - 70_000 });
+  recordLatencySample("stale", { latencyMs: 10, ok: true, probedAt: now - 190_000 });
   const snap = getLatencyHealthSnapshot(now);
   assert.ok("fresh" in snap);
   assert.equal("stale" in snap, false);
