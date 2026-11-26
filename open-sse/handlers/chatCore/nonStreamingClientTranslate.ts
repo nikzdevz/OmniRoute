@@ -37,6 +37,7 @@ import { matchesCustomToolDeclaration } from "../../utils/toolCallName.ts";
 import { plaintextCollaborationFields } from "../../translator/response/openai-responses/collaborationPlaintextMarker.ts";
 import { finalizeResponsesTerminalStatus } from "../../translator/helpers/responsesTerminalStatus.ts";
 import { restoreResponsesToolNames } from "../../translator/helpers/responsesToolNameRestore.ts";
+import { applyResponseProcessorToBody } from "../../services/responseProcessor/apply.ts";
 import {
   canonicalizeDeclaredToolName,
   collectDeclaredToolNames,
@@ -357,6 +358,12 @@ export function translateNonStreamingClientResponse(
       parseTextualReasoningTags: shouldParseTextualReasoningTags(provider, model),
     });
   }
+
+  // ── Response Processor: rewrite banned text on the way out ─────────────────
+  // Runs after sanitization (so it sees the client's real text) and before the JSON fence
+  // unwrap and the usage buffer. Only answer-bearing fields are touched: tool arguments,
+  // ids and usage are left alone. The processor is a no-op when the layer is disabled.
+  translatedResponse = applyResponseProcessorToBody(translatedResponse).value;
 
   // ── JSON mode: unwrap a ```json fence the provider put around the object ──
   // Prompt-instructed structured output (Claude-backed targets especially) often

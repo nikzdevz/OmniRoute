@@ -21,6 +21,8 @@ import {
 } from "../../utils/progressTracker.ts";
 import { createPiiSseTransform as defaultPiiSse } from "@/lib/streamingPiiTransform";
 import { isPiiTransformEnabled, resolvePiiGate } from "@/lib/streamingPiiTransform";
+import { createResponseProcessorSseTransform as defaultResponseProcessorSse } from "@omniroute/open-sse/services/responseProcessor/sseTransform.ts";
+import { getCachedResponseProcessor } from "@omniroute/open-sse/services/responseProcessor/settings.ts";
 
 // Single seam to the PII stream module: streamingTail resolves the per-request gate through this
 // file instead of importing src/ itself (boundary ratchet, quality-baseline.json).
@@ -56,6 +58,9 @@ export interface StreamingPipelineDeps {
   createSseHeartbeatTransform: typeof defaultHeartbeat;
   shapeForClientFormat: typeof defaultShape;
   createModelEchoTransform: typeof defaultModelEcho;
+  /** Optional so a caller that builds its own deps (tests, alternative hosts) stays valid. */
+  getResponseProcessor?: typeof getCachedResponseProcessor;
+  createResponseProcessorSseTransform?: typeof defaultResponseProcessorSse;
 }
 
 const DEFAULT_DEPS: StreamingPipelineDeps = {
@@ -68,7 +73,26 @@ const DEFAULT_DEPS: StreamingPipelineDeps = {
   createSseHeartbeatTransform: defaultHeartbeat,
   shapeForClientFormat: defaultShape,
   createModelEchoTransform: defaultModelEcho,
+  getResponseProcessor: getCachedResponseProcessor,
+  createResponseProcessorSseTransform: defaultResponseProcessorSse,
 };
+
+/**
+ * Build the response-processor transform, or `null` when the layer is off.
+ *
+ * Total by construction: a missing dependency, an unavailable settings DB or a compile failure
+ * all collapse to `null`, so a broken rule set can never take a stream down with it.
+ */
+function buildResponseProcessorTransform(deps: StreamingPipelineDeps) {
+  try {
+    const getProcessor = deps.getResponseProcessor;
+    const createTransform = deps.createResponseProcessorSseTransform;
+    if (typeof getProcessor !== "function" || typeof createTransform !== "function") return null;
+    return createTransform(getProcessor()) ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export function assembleStreamingPipeline(
   args: {
@@ -134,6 +158,15 @@ export function assembleStreamingPipeline(
     } else if (deps.isFeatureFlagEnabled("PII_RESPONSE_SANITIZATION")) {
       piiStream = piiStream.pipeThrough(deps.createPiiSseTransform());
     }
+  }
+
+  // Response Processor runs last on text, after credential/PII redaction and before the
+  // heartbeat frames the bytes, so a banned banner is rewritten once and no downstream
+  // transform can reintroduce it. Disabled (or rule-less) configuration returns null: no
+  // pass over the stream at all.
+  const responseProcessorTransform = buildResponseProcessorTransform(deps);
+  if (responseProcessorTransform) {
+    piiStream = piiStream.pipeThrough(responseProcessorTransform);
   }
 
   if (progressEnabled) {

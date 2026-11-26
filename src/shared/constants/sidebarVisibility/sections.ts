@@ -218,6 +218,24 @@ export const COMPRESSION_CONTEXT_GROUP: SidebarItemGroup = {
   ],
 };
 
+const RESPONSE_PROCESSOR_GROUP: SidebarItemGroup = {
+  type: "group",
+  id: "response-processor-group",
+  titleKey: "responseProcessorGroup",
+  titleFallback: "Response Processing",
+  items: [
+    {
+      id: "response-processor",
+      href: "/dashboard/response-processor",
+      i18nKey: "responseProcessor",
+      labelFallback: "Response Processor",
+      subtitleKey: "responseProcessorSubtitle",
+      subtitleFallback: "Banned-text rewriting",
+      icon: "shield",
+    },
+  ],
+};
+
 const TOOLS_GROUP: SidebarItemGroup = {
   type: "group",
   id: "tools",
@@ -846,6 +864,7 @@ export const SIDEBAR_SECTIONS: readonly SidebarSectionDefinition[] = [
     children: [
       ...OMNI_PROXY_ITEMS,
       COMPRESSION_CONTEXT_GROUP,
+      RESPONSE_PROCESSOR_GROUP,
       TOOLS_GROUP,
       INTEGRATIONS_GROUP,
       PROXY_ITEM,

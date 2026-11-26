@@ -11,6 +11,7 @@ import { getDefaultErrorMessage, getErrorInfo } from "../config/errorConfig.ts";
 import { normalizePayloadForLog } from "@/lib/logPayloads";
 import type { ModelCooldownErrorPayload } from "@/types";
 import { buildPassthroughErrorResponse } from "./upstreamErrorPassthrough.ts";
+import { applyResponseProcessorToText } from "../services/responseProcessor/apply.ts";
 import { isRegisteredFeatureFlagEnabled } from "./registeredFeatureFlag.ts";
 import { resolveRetryAfterInstant } from "./retryAfterInstant.ts";
 import { parseAntigravityRetryTime, parseProseRetryDelayMs } from "./proseRetryDelay.ts";
@@ -72,7 +73,8 @@ export function buildErrorBody(
   classification?: ErrorBodyClassification
 ): ErrorResponseBody {
   const errorInfo = getErrorInfo(statusCode);
-  const safeMessage = sanitizeErrorMessage(message) || getDefaultErrorMessage(statusCode);
+  const safeMessage =
+    applyResponseProcessorToText(sanitizeErrorMessage(message)).value || getDefaultErrorMessage(statusCode);
   const safeReason =
     typeof classification?.reason === "string" && isSafePublicErrorIdentifier(classification.reason)
       ? classification.reason

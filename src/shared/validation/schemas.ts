@@ -6,6 +6,7 @@ export * from "./schemas/pricing";
 export * from "./schemas/proxy";
 export * from "./schemas/provider";
 export * from "./schemas/payloadRules";
+export * from "./schemas/responseProcessor";
 export * from "./schemas/routing";
 export * from "./schemas/apiV1";
 export * from "./schemas/gemini";
