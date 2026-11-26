@@ -69,6 +69,9 @@ export default function ResponseProcessorPanel() {
   const [sample, setSample] = useState("");
   const [preview, setPreview] = useState<{ text: string; hits: Hits[] } | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  /** Ids of rules whose editor is expanded; collapsed rows show a one-line summary. */
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const listRef = useRef<HTMLUListElement>(null);
   const savedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
@@ -100,7 +103,28 @@ export default function ResponseProcessorPanel() {
     setRules((current) => current.filter((rule) => rule.id !== id));
   }, []);
 
+  const toggleExpanded = useCallback((id: string) => {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
   const locked = loading || saving || loadError !== null;
+
+  /** Add a rule, expand its editor and scroll it into view inside the list. */
+  const addRule = useCallback(() => {
+    setRules((current) => {
+      const rule = newRule(current.length);
+      setExpanded((open) => new Set(open).add(rule.id));
+      requestAnimationFrame(() => {
+        listRef.current?.lastElementChild?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      });
+      return [...current, rule];
+    });
+  }, []);
 
   const importStarterPack = async () => {
     try {
@@ -205,7 +229,17 @@ export default function ResponseProcessorPanel() {
           />
 
           <div className="flex items-center justify-between gap-3">
-            <h4 className="text-sm font-medium">{t("responseProcessorRulesHeading")}</h4>
+            <h4 className="text-sm font-medium">
+              {t("responseProcessorRulesHeading")}
+              {rules.length > 0 && (
+                <span className="ml-2 text-xs font-normal text-text-muted">
+                  {t("responseProcessorRulesSummary", {
+                    active: rules.filter((rule) => rule.enabled).length,
+                    total: rules.length,
+                  })}
+                </span>
+              )}
+            </h4>
             <div className="flex items-center gap-2">
               <Button
                 size="sm"
@@ -220,7 +254,7 @@ export default function ResponseProcessorPanel() {
                 size="sm"
                 variant="secondary"
                 disabled={locked}
-                onClick={() => setRules((current) => [...current, newRule(current.length)])}
+                onClick={addRule}
                 data-testid="response-processor-add-rule"
               >
                 <Icon name="add" size={14} /> {t("responseProcessorAddRule")}
@@ -232,89 +266,142 @@ export default function ResponseProcessorPanel() {
             <p className="text-xs text-text-muted">{t("responseProcessorNoRules")}</p>
           )}
 
-          <ul className="flex flex-col gap-3">
-            {rules.map((rule) => (
-              <li key={rule.id} className="rounded-md border p-3">
-                <div className="flex flex-col gap-2">
-                  <div className="flex flex-wrap items-end gap-2">
-                    <Input
-                      className="flex-1 min-w-45"
-                      label={t("responseProcessorMatch")}
-                      value={rule.match}
-                      disabled={locked}
-                      onChange={(e) => patchRule(rule.id, { match: e.target.value })}
-                      data-testid="response-processor-rule-match"
-                    />
-                    <Select
-                      label={t("responseProcessorMatchType")}
-                      value={rule.matchType}
-                      disabled={locked}
-                      onChange={(e) =>
-                        patchRule(rule.id, { matchType: e.target.value as MatchType })
-                      }
-                      options={[
-                        { value: "literal", label: t("responseProcessorLiteral") },
-                        { value: "regex", label: t("responseProcessorRegex") },
-                      ]}
-                    />
-                    <Select
-                      label={t("responseProcessorAction")}
-                      value={rule.action}
-                      disabled={locked}
-                      onChange={(e) => patchRule(rule.id, { action: e.target.value as Action })}
-                      options={ACTION_OPTIONS}
-                    />
-                    <Select
-                      label={t("responseProcessorAnchor")}
-                      value={rule.anchor}
-                      disabled={locked}
-                      onChange={(e) => patchRule(rule.id, { anchor: e.target.value as Anchor })}
-                      options={ANCHOR_OPTIONS}
-                    />
-                  </div>
-                  <div className="flex flex-wrap items-end gap-2">
-                    <Input
-                      className="flex-1 min-w-45"
-                      label={t("responseProcessorReplaceWith")}
-                      value={rule.replaceWith ?? ""}
-                      disabled={locked || rule.action === "remove"}
-                      onChange={(e) => patchRule(rule.id, { replaceWith: e.target.value })}
-                    />
-                    <Toggle
-                      size="sm"
-                      checked={rule.caseSensitive === true}
-                      disabled={locked}
-                      onChange={(checked) => patchRule(rule.id, { caseSensitive: checked })}
-                      label={t("responseProcessorCaseSensitive")}
-                    />
-                    <Toggle
-                      size="sm"
-                      checked={rule.enabled}
-                      disabled={locked}
-                      onChange={(checked) => patchRule(rule.id, { enabled: checked })}
-                      label={t("responseProcessorRuleEnable")}
-                    />
-                    <Button
-                      size="icon-sm"
-                      variant="destructive-ghost"
-                      disabled={locked}
-                      aria-label={t("responseProcessorDelete")}
-                      onClick={() => removeRule(rule.id)}
+          <ul ref={listRef} className="flex max-h-[26rem] flex-col gap-2 overflow-y-auto pr-1">
+            {rules.map((rule) => {
+              const open = expanded.has(rule.id);
+              const ruleIssues = issues.filter((issue) => issue.ruleId === rule.id);
+              return (
+                <li key={rule.id} className="rounded-md border" data-rule-open={open || undefined}>
+                  {open ? (
+                    <div className="flex flex-col gap-2 bg-bg-subtle/40 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                          aria-expanded={open}
+                          aria-label={t("responseProcessorRuleCollapse")}
+                          onClick={() => toggleExpanded(rule.id)}
+                        >
+                          <Icon
+                            name="expand_more"
+                            size={14}
+                            className="shrink-0 text-text-muted"
+                          />
+                          <span className="truncate font-mono text-xs">
+                            {rule.match || t("responseProcessorMatch")}
+                          </span>
+                        </button>
+                        <Button
+                          size="icon-sm"
+                          variant="destructive-ghost"
+                          disabled={locked}
+                          aria-label={t("responseProcessorDelete")}
+                          onClick={() => removeRule(rule.id)}
+                        >
+                          <Icon name="delete" size={16} />
+                        </Button>
+                      </div>
+                      <div className="flex flex-wrap items-end gap-2">
+                        <Input
+                          className="flex-1 min-w-45"
+                          label={t("responseProcessorMatch")}
+                          value={rule.match}
+                          disabled={locked}
+                          onChange={(e) => patchRule(rule.id, { match: e.target.value })}
+                          data-testid="response-processor-rule-match"
+                        />
+                        <Select
+                          label={t("responseProcessorMatchType")}
+                          value={rule.matchType}
+                          disabled={locked}
+                          onChange={(e) =>
+                            patchRule(rule.id, { matchType: e.target.value as MatchType })
+                          }
+                          options={[
+                            { value: "literal", label: t("responseProcessorLiteral") },
+                            { value: "regex", label: t("responseProcessorRegex") },
+                          ]}
+                        />
+                        <Select
+                          label={t("responseProcessorAction")}
+                          value={rule.action}
+                          disabled={locked}
+                          onChange={(e) => patchRule(rule.id, { action: e.target.value as Action })}
+                          options={ACTION_OPTIONS}
+                        />
+                        <Select
+                          label={t("responseProcessorAnchor")}
+                          value={rule.anchor}
+                          disabled={locked}
+                          onChange={(e) => patchRule(rule.id, { anchor: e.target.value as Anchor })}
+                          options={ANCHOR_OPTIONS}
+                        />
+                      </div>
+                      <div className="flex flex-wrap items-end gap-2">
+                        <Input
+                          className="flex-1 min-w-45"
+                          label={t("responseProcessorReplaceWith")}
+                          value={rule.replaceWith ?? ""}
+                          disabled={locked || rule.action === "remove"}
+                          onChange={(e) => patchRule(rule.id, { replaceWith: e.target.value })}
+                        />
+                        <Toggle
+                          size="sm"
+                          checked={rule.caseSensitive === true}
+                          disabled={locked}
+                          onChange={(checked) => patchRule(rule.id, { caseSensitive: checked })}
+                          label={t("responseProcessorCaseSensitive")}
+                        />
+                        <Toggle
+                          size="sm"
+                          checked={rule.enabled}
+                          disabled={locked}
+                          onChange={(checked) => patchRule(rule.id, { enabled: checked })}
+                          label={t("responseProcessorRuleEnable")}
+                        />
+                      </div>
+                      {ruleIssues.length > 0 && (
+                        <p role="alert" className="text-xs font-medium text-error">
+                          {ruleIssues.map((issue) => issue.message).join("; ")}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 p-3 text-left"
+                      aria-expanded={open}
+                      aria-label={t("responseProcessorRuleCollapse")}
+                      onClick={() => toggleExpanded(rule.id)}
                     >
-                      <Icon name="delete" size={16} />
-                    </Button>
-                  </div>
-                  {issues.some((issue) => issue.ruleId === rule.id) && (
-                    <p role="alert" className="text-xs font-medium text-error">
-                      {issues
-                        .filter((issue) => issue.ruleId === rule.id)
-                        .map((issue) => issue.message)
-                        .join("; ")}
-                    </p>
+                      <Icon name="expand_more" size={14} className="shrink-0 text-text-muted" />
+                      <span className="min-w-0 flex-1 truncate font-mono text-xs">
+                        {rule.match || t("responseProcessorMatch")}
+                      </span>
+                      <span className="shrink-0 rounded-full bg-bg-subtle px-2 py-0.5 text-[10px] text-text-muted">
+                        {rule.matchType === "regex"
+                          ? t("responseProcessorRegex")
+                          : t("responseProcessorLiteral")}
+                      </span>
+                      <span className="shrink-0 rounded-full bg-bg-subtle px-2 py-0.5 text-[10px] text-text-muted">
+                        {rule.action === "remove"
+                          ? t("responseProcessorActionRemove")
+                          : rule.action === "replace-whole-response"
+                            ? t("responseProcessorActionWhole")
+                            : t("responseProcessorActionReplace")}
+                      </span>
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${
+                          rule.enabled ? "text-success" : "text-text-muted"
+                        }`}
+                      >
+                        {rule.enabled ? "●" : "○"}
+                      </span>
+                    </button>
                   )}
-                </div>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
 
           <div className="flex flex-col gap-2 rounded-md border p-3">
@@ -332,7 +419,7 @@ export default function ResponseProcessorPanel() {
             </p>
           </div>
 
-          <div className="flex items-center justify-end gap-2">
+          <div className="sticky bottom-0 z-10 -mx-1 flex items-center justify-end gap-2 border-t border-border bg-surface/95 py-2 backdrop-blur-sm">
             <span role="status" className="text-xs text-success">
               {status === "saved" && t("responseProcessorSaved")}
             </span>

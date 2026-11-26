@@ -8729,6 +8729,8 @@
     "responseProcessorEmptyFallbackPlaceholder": "e.g. (filtered)",
     "responseProcessorEmptyFallbackCount": "{count} / 2048 characters",
     "responseProcessorNoRules": "No rules configured.",
+    "responseProcessorRulesSummary": "{active} of {total} rules active",
+    "responseProcessorRuleCollapse": "Toggle rule editor",
     "responseProcessorMatch": "Match",
     "responseProcessorMatchType": "Type",
     "responseProcessorLiteral": "Literal",
