@@ -144,11 +144,36 @@ function anchoredStartMatch(subject: string, rule: CompiledRule): string | null 
   return match ? match[0] : null;
 }
 
+export interface ProcessTextOptions {
+  /**
+   * Substitute `processor.emptyFallback` when the rules removed the whole text. Enabled for
+   * answer fields; disabled for error messages (they have their own default) and for
+   * reasoning (an emptied thought should stay empty rather than become an answer).
+   */
+  applyEmptyFallback?: boolean;
+}
+
+/** Apply the configured empty-response reply, or keep the empty string when none is set. */
+function withEmptyFallback(
+  original: string,
+  result: string,
+  processor: CompiledResponseProcessor,
+  options?: ProcessTextOptions
+): string {
+  if (result || !original.trim()) return result;
+  if (options?.applyEmptyFallback === false) return result;
+  return processor.emptyFallback;
+}
+
 /**
  * Apply every enabled rule, in order, to one string. Later rules see the output of earlier
  * ones, so chained conditions behave as an ordered pipeline.
  */
-export function processText(text: string, processor: CompiledResponseProcessor): ProcessTextResult {
+export function processText(
+  text: string,
+  processor: CompiledResponseProcessor,
+  options?: ProcessTextOptions
+): ProcessTextResult {
   if (!processor.enabled || processor.rules.length === 0 || !text) {
     return { text, changed: false, hits: [] };
   }
@@ -158,7 +183,8 @@ export function processText(text: string, processor: CompiledResponseProcessor):
     const next = applyRule(current, rule, hits);
     if (next !== current) current = next;
   }
-  return { text: current, changed: current !== text, hits };
+  const withFallback = withEmptyFallback(text, current, processor, options);
+  return { text: withFallback, changed: withFallback !== text, hits };
 }
 
 /* ------------------------------------------------------------------ *
@@ -177,13 +203,16 @@ interface WalkContext {
 }
 
 /** Rewrite one string field; returns the same reference when nothing changed. */
-function rewriteString(value: unknown, ctx: WalkContext): unknown {
+function rewriteString(value: unknown, ctx: WalkContext, options?: ProcessTextOptions): unknown {
   if (typeof value !== "string" || !value) return value;
-  const result = processText(value, ctx.processor);
+  const result = processText(value, ctx.processor, options);
   if (!result.changed) return value;
   ctx.hits.push(...result.hits);
   return result.text;
 }
+
+/** An emptied reasoning field stays empty: a fallback reply belongs in the answer only. */
+const NO_FALLBACK: ProcessTextOptions = { applyEmptyFallback: false };
 
 /** `content` may be a string or an array of typed parts. */
 function rewriteContentValue(value: unknown, ctx: WalkContext): unknown {
@@ -252,6 +281,11 @@ function rewriteMessage(message: JsonRecord, ctx: WalkContext): JsonRecord {
   for (const key of ["reasoning_content", "reasoning", "reasoning_text", "refusal"] as const) {
     const value = message[key];
     if (typeof value !== "string") continue;
+    if (key === "reasoning_content" || key === "reasoning" || key === "reasoning_text") {
+      const rewritten = rewriteString(value, ctx, NO_FALLBACK);
+      if (rewritten !== value) next = { ...(next ?? message), [key]: rewritten };
+      continue;
+    }
     const rewritten = rewriteString(value, ctx);
     if (rewritten !== value) next = { ...(next ?? message), [key]: rewritten };
   }
@@ -289,18 +323,20 @@ function rewriteOutputItem(item: unknown, ctx: WalkContext): unknown {
 
 function rewriteErrorField(body: JsonRecord, ctx: WalkContext): JsonRecord {
   const error = body.error;
+  // An error envelope already falls back to its own status-derived default message, so a rule
+  // set that empties it must not invent an answer text here.
   if (isRecord(error)) {
     let next: JsonRecord | null = null;
     for (const key of ["message", "detail"] as const) {
       const value = error[key];
       if (typeof value !== "string") continue;
-      const rewritten = rewriteString(value, ctx);
+      const rewritten = rewriteString(value, ctx, NO_FALLBACK);
       if (rewritten !== value) next = { ...(next ?? error), [key]: rewritten };
     }
     return next ? { ...body, error: next } : body;
   }
   if (typeof error === "string") {
-    const rewritten = rewriteString(error, ctx);
+    const rewritten = rewriteString(error, ctx, NO_FALLBACK);
     if (rewritten !== error) return { ...body, error: rewritten };
   }
   return body;
@@ -313,6 +349,10 @@ function rewriteErrorField(body: JsonRecord, ctx: WalkContext): JsonRecord {
  * Anthropic Messages (`content[]` parts), OpenAI Responses (`output[].content[]` /
  * `output[].summary[]`, `output_text`), and error envelopes (`error.message`). Tool
  * arguments, ids, usage and every other metadata field are left untouched.
+ *
+ * When rules consume an answer field entirely, `processor.emptyFallback` replaces it so the
+ * client never receives an empty completion for a request that produced text. Error and
+ * reasoning fields are exempt: they have their own fallbacks or must stay empty.
  */
 export function processResponseBody(
   body: unknown,
@@ -354,7 +394,7 @@ export function processResponseBody(
   }
 
   if (typeof body.detail === "string") {
-    const detail = rewriteString(body.detail, ctx);
+    const detail = rewriteString(body.detail, ctx, NO_FALLBACK);
     if (detail !== body.detail) next = { ...next, detail };
   }
 
@@ -365,7 +405,7 @@ export function processResponseBody(
     body.output === undefined &&
     body.content === undefined
   ) {
-    const message = rewriteString(body.message, ctx);
+    const message = rewriteString(body.message, ctx, NO_FALLBACK);
     if (message !== body.message) next = { ...next, message };
   }
 

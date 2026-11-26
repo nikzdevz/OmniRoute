@@ -9,6 +9,7 @@
 import { getDbInstance } from "@/lib/db/core";
 import { updateSettings } from "@/lib/db/settings";
 import { compileResponseProcessor, type CompiledResponseProcessor } from "./compile.ts";
+import { MAX_EMPTY_FALLBACK_LENGTH } from "./compile.ts";
 import { DEFAULT_RESPONSE_PROCESSOR_CONFIG } from "./types.ts";
 import type {
   ResponseProcessorAction,
@@ -96,7 +97,12 @@ export function normalizeResponseProcessorConfig(value: unknown): ResponseProces
     const rule = normalizeRule(entry, index);
     if (rule) rules.push(rule);
   });
-  return { enabled: value.enabled === true, rules };
+  const rawFallback = toStringValue(value.emptyFallback);
+  return {
+    enabled: value.enabled === true,
+    rules,
+    emptyFallback: rawFallback ? rawFallback.slice(0, MAX_EMPTY_FALLBACK_LENGTH) : "",
+  };
 }
 
 /* ------------------------------------------------------------------ *

@@ -107,13 +107,25 @@ function conditionsPass(text: string, rule: CompiledRule): boolean {
 export class StreamTextRewriter {
   private buffer = "";
   private emitted = false;
+  /** True once any non-empty text was released: an emptied stream counts as empty. */
+  private produced = false;
+  /** True once any text arrived: a lane that never saw text must stay silent. */
+  private sawInput = false;
   private startDecided: boolean;
   private readonly inlineRules: CompiledRule[];
   private readonly startRules: CompiledRule[];
   private readonly holdback: number;
   private readonly startHold: number;
 
-  constructor(private readonly processor: CompiledResponseProcessor) {
+  constructor(
+    private readonly processor: CompiledResponseProcessor,
+    /**
+     * Whether this lane may emit `emptyFallback` when rules consume its whole text. Only the
+     * answer lane may: an emptied reasoning lane, or a stream that never carried text at all,
+     * must stay empty rather than gain a reply.
+     */
+    private readonly allowEmptyFallback = true
+  ) {
     this.inlineRules = processor.rules.filter(
       (rule) => rule.anchor === "anywhere" && rule.enabled
     );
@@ -132,6 +144,7 @@ export class StreamTextRewriter {
   /** Feed the next fragment; returns the text that is now safe to emit. */
   push(chunk: string): StreamPushResult {
     if (!chunk) return EMPTY;
+    this.sawInput = true;
     this.buffer += chunk;
     if (!this.processor.enabled || (this.inlineRules.length === 0 && this.startRules.length === 0)) {
       return this.release(this.buffer);
@@ -141,7 +154,7 @@ export class StreamTextRewriter {
 
   /** Final flush: apply every remaining rule to the held-back tail. */
   flush(): StreamPushResult {
-    if (!this.buffer) return EMPTY;
+    if (!this.buffer) return this.produced ? EMPTY : this.emptyFallbackResult([]);
     if (!this.processor.enabled) return this.release(this.buffer);
     const text = this.buffer;
     this.buffer = "";
@@ -149,20 +162,49 @@ export class StreamTextRewriter {
     const rules = this.startDecided
       ? this.inlineRules
       : [...this.startRules, ...this.inlineRules];
-    if (rules.length === 0) return { text, hits: [] };
-    const result = processText(text, {
-      ...this.processor,
-      rules,
-      hasStartRules: false,
-      hasWholeResponseRules: false,
-    });
+    if (rules.length === 0) {
+      if (text) this.produced = true;
+      return { text, hits: [] };
+    }
+    const result = processText(
+      text,
+      {
+        ...this.processor,
+        rules,
+        hasStartRules: false,
+        hasWholeResponseRules: false,
+      },
+      { applyEmptyFallback: false }
+    );
     this.startDecided = true;
-    return { text: result.text, hits: result.hits };
+    if (result.text) {
+      this.produced = true;
+      return { text: result.text, hits: result.hits };
+    }
+    // The rules consumed the whole answer: substitute the configured reply so the client
+    // never receives an empty completion for a request that produced text.
+    return this.emptyFallbackResult(result.hits);
+  }
+
+  /**
+   * The configured reply for a stream whose text was entirely removed, as a single hitless
+   * emission. Empty when no fallback is configured, which keeps the previous behaviour, and
+   * empty for a lane that never received text at all (a tool-only or usage-only lane must not
+   * gain a reply).
+   */
+  private emptyFallbackResult(hits: RuleHit[]): StreamPushResult {
+    this.emitted = true;
+    if (!this.sawInput || !this.allowEmptyFallback) return { text: "", hits };
+    const text = this.processor.emptyFallback;
+    if (!text) return { text: "", hits };
+    this.produced = true;
+    return { text, hits };
   }
 
   private release(text: string): StreamPushResult {
     this.buffer = "";
     this.emitted = true;
+    if (text) this.produced = true;
     return { text, hits: [] };
   }
 
@@ -174,12 +216,18 @@ export class StreamTextRewriter {
       // The head is long enough to decide every start-anchored rule.
       for (const rule of this.startRules) {
         if (!conditionsPass(this.buffer, rule)) continue;
-        const result = processText(this.buffer, {
-          ...this.processor,
-          rules: [{ ...rule, anchor: "start" }],
-          hasStartRules: false,
-          hasWholeResponseRules: false,
-        });
+        const result = processText(
+          this.buffer,
+          {
+            ...this.processor,
+            rules: [{ ...rule, anchor: "start" }],
+            hasStartRules: false,
+            hasWholeResponseRules: false,
+          },
+          // A start rule that empties the head must not inject the reply mid-stream; the
+          // final flush decides whether the whole answer ended up empty.
+          { applyEmptyFallback: false }
+        );
         if (result.changed) {
           this.buffer = result.text;
           hits.push(...result.hits);
@@ -204,13 +252,17 @@ export class StreamTextRewriter {
     const emitted = work.slice(0, boundary);
     this.buffer = work.slice(boundary);
     this.emitted = true;
+    if (emitted) this.produced = true;
     return { text: emitted, hits };
   }
 }
 
 /** Convenience factory mirroring the engine's entry points. */
-export function createStreamRewriter(processor: CompiledResponseProcessor): StreamTextRewriter {
-  return new StreamTextRewriter(processor);
+export function createStreamRewriter(
+  processor: CompiledResponseProcessor,
+  allowEmptyFallback = true
+): StreamTextRewriter {
+  return new StreamTextRewriter(processor, allowEmptyFallback);
 }
 
 /** Cap used by callers that must bound a single buffered field. */

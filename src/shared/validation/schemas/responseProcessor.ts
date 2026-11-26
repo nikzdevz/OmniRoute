@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const MAX_MATCH_SOURCE = 512;
 const MAX_REPLACEMENT = 8192;
+const MAX_EMPTY_FALLBACK = 2048;
 
 export const responseProcessorConditionSchema = z
   .object({
@@ -32,11 +33,17 @@ export const updateResponseProcessorSchema = z
   .object({
     enabled: z.boolean().optional(),
     rules: z.array(responseProcessorRuleSchema).max(500).optional(),
+    /** Reply used when a rule set removes an answer down to nothing. Blank keeps it empty. */
+    emptyFallback: z.string().max(MAX_EMPTY_FALLBACK).optional(),
   })
   .strict()
-  .refine((value) => value.enabled !== undefined || value.rules !== undefined, {
-    message: "No valid fields to update",
-  });
+  .refine(
+    (value) =>
+      value.enabled !== undefined || value.rules !== undefined || value.emptyFallback !== undefined,
+    {
+      message: "No valid fields to update",
+    }
+  );
 
 export const previewResponseProcessorSchema = z
   .object({
@@ -44,6 +51,8 @@ export const previewResponseProcessorSchema = z
     body: z.unknown().optional(),
     /** Unsaved rules from the editor; omit to preview the saved configuration. */
     rules: z.array(responseProcessorRuleSchema).max(500).optional(),
+    /** Unsaved empty-response reply, previewed alongside the unsaved rules. */
+    emptyFallback: z.string().max(MAX_EMPTY_FALLBACK).optional(),
   })
   .strict()
   .refine((value) => value.text !== undefined || value.body !== undefined, {

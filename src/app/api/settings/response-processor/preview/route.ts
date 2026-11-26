@@ -34,7 +34,8 @@ export async function POST(request: Request) {
     const { config } = getResponseProcessorConfig();
     // Preview may run unsaved rules from the editor; otherwise the saved set.
     const rules = validation.data.rules ?? config.rules;
-    const compiled = compileConfig({ enabled: true, rules }).compiled;
+    const emptyFallback = validation.data.emptyFallback ?? config.emptyFallback ?? "";
+    const compiled = compileConfig({ enabled: true, rules, emptyFallback }).compiled;
 
     if (!compiled.enabled || compiled.rules.length === 0) {
       return NextResponse.json({
@@ -53,6 +54,7 @@ export async function POST(request: Request) {
         changed: result.changed,
         text: result.text,
         hits: result.hits,
+        emptyFallbackApplied: result.text === emptyFallback && emptyFallback !== "",
       });
     }
 
@@ -62,6 +64,7 @@ export async function POST(request: Request) {
       changed: result.changed,
       body: result.body,
       hits: result.hits,
+      emptyFallbackApplied: emptyFallback !== "" && result.changed,
     });
   } catch (error) {
     console.error("Error previewing response processor rules:", error);

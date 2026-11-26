@@ -12,6 +12,7 @@ export {
   MAX_HOLDBACK,
   MAX_MATCH_LENGTH,
   MAX_MATCH_SOURCE_LENGTH,
+  MAX_EMPTY_FALLBACK_LENGTH,
   type CompileResult,
   type CompiledCondition,
   type CompiledResponseProcessor,
@@ -23,6 +24,7 @@ export {
   processText,
   summarizeHits,
   type ProcessBodyResult,
+  type ProcessTextOptions,
   type ProcessTextResult,
   type RuleHit,
 } from "./engine.ts";

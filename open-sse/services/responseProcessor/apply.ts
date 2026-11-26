@@ -46,7 +46,9 @@ export function applyResponseProcessorToText(text: string): AppliedResponseResul
   const compiled = safeProcessor();
   if (!compiled) return { value: text, changed: false, hits: [] };
   try {
-    const result = processText(text, compiled);
+    // Error messages keep their own status-derived default (`buildErrorBody`); the
+    // empty-response reply belongs to answers only.
+    const result = processText(text, compiled, { applyEmptyFallback: false });
     return { value: result.text, changed: result.changed, hits: result.hits };
   } catch {
     return { value: text, changed: false, hits: [] };

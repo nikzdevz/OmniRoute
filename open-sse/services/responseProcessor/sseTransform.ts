@@ -60,7 +60,9 @@ function createProcessor(
     let lane = lanes.get(key);
     if (!lane) {
       lane = {
-        rewriter: new StreamTextRewriter(compiled),
+        // Only the answer lane may substitute the empty-response reply: an emptied reasoning
+        // lane must stay empty rather than turn into an answer.
+        rewriter: new StreamTextRewriter(compiled, category !== "reasoning"),
         category,
         index: Number(String(index).split("_")[0] || "0"),
       };

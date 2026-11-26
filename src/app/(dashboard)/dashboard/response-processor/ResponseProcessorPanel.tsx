@@ -60,6 +60,7 @@ export default function ResponseProcessorPanel() {
   const t = useTranslations("settings");
   const [enabled, setEnabled] = useState(false);
   const [rules, setRules] = useState<Rule[]>([]);
+  const [emptyFallback, setEmptyFallback] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -82,6 +83,7 @@ export default function ResponseProcessorPanel() {
         }
         setEnabled(data.enabled === true);
         if (Array.isArray(data.rules)) setRules(data.rules as Rule[]);
+        if (typeof data.emptyFallback === "string") setEmptyFallback(data.emptyFallback);
         if (Array.isArray(data.issues)) {
           setIssues(data.issues as { ruleId: string; message: string }[]);
         }
@@ -131,7 +133,7 @@ export default function ResponseProcessorPanel() {
       const res = await fetch("/api/settings/response-processor", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled, rules }),
+        body: JSON.stringify({ enabled, rules, emptyFallback }),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       const data = (await res.json().catch(() => null)) as
@@ -153,7 +155,7 @@ export default function ResponseProcessorPanel() {
       const res = await fetch("/api/settings/response-processor/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: sample, rules }),
+        body: JSON.stringify({ text: sample, rules, emptyFallback }),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       const data = (await res.json().catch(() => null)) as
@@ -314,6 +316,21 @@ export default function ResponseProcessorPanel() {
               </li>
             ))}
           </ul>
+
+          <div className="flex flex-col gap-2 rounded-md border p-3">
+            <Input
+              label={t("responseProcessorEmptyFallback")}
+              hint={t("responseProcessorEmptyFallbackHint")}
+              value={emptyFallback}
+              disabled={locked}
+              placeholder={t("responseProcessorEmptyFallbackPlaceholder")}
+              onChange={(e) => setEmptyFallback(e.target.value)}
+              data-testid="response-processor-empty-fallback"
+            />
+            <p className="text-xs text-text-muted">
+              {t("responseProcessorEmptyFallbackCount", { count: emptyFallback.length })}
+            </p>
+          </div>
 
           <div className="flex items-center justify-end gap-2">
             <span role="status" className="text-xs text-success">

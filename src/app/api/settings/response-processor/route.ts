@@ -64,6 +64,7 @@ export async function PUT(request: Request) {
     const { config, issues: compileIssues } = await setResponseProcessorConfig({
       enabled: validation.data.enabled,
       rules: validation.data.rules,
+      emptyFallback: validation.data.emptyFallback,
     });
     return NextResponse.json({ ...config, issues: compileIssues });
   } catch (error) {

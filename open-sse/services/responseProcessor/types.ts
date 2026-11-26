@@ -60,6 +60,12 @@ export interface ResponseProcessorConfig {
   enabled: boolean;
   /** Rules applied in order; later rules see the output of earlier ones. */
   rules: ResponseProcessorRule[];
+  /**
+   * Reply used when a rule set removes so much text that an answer field would arrive empty.
+   * Blank keeps the empty result. Never applied to reasoning, tool arguments or error
+   * envelopes (an error body already falls back to its own default message).
+   */
+  emptyFallback?: string;
 }
 
 /** Text fields of a parsed response body that the processor is allowed to rewrite. */
@@ -80,4 +86,5 @@ export const RESPONSE_TEXT_PATHS = [
 export const DEFAULT_RESPONSE_PROCESSOR_CONFIG: ResponseProcessorConfig = {
   enabled: false,
   rules: [],
+  emptyFallback: "",
 };

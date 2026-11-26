@@ -59,6 +59,8 @@ export interface CompiledResponseProcessor {
   hasStartRules: boolean;
   /** Whether any enabled rule requires the whole response text. */
   hasWholeResponseRules: boolean;
+  /** Reply substituted when a rule set removes an answer field down to nothing. */
+  emptyFallback: string;
 }
 
 export interface RuleCompileIssue {
@@ -78,7 +80,16 @@ const EMPTY_PROCESSOR: CompiledResponseProcessor = {
   holdback: 0,
   hasStartRules: false,
   hasWholeResponseRules: false,
+  emptyFallback: "",
 };
+
+/** Ceiling for the configured empty-response reply. */
+export const MAX_EMPTY_FALLBACK_LENGTH = 2048;
+
+function compileEmptyFallback(value: unknown): string {
+  const text = toStringValue(value).trim();
+  return text ? text.slice(0, MAX_EMPTY_FALLBACK_LENGTH) : "";
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -211,6 +222,7 @@ export function compileResponseProcessor(config: unknown): CompileResult {
     holdback,
     hasStartRules: rules.some((rule) => rule.anchor === "start"),
     hasWholeResponseRules: rules.some((rule) => rule.anchor === "whole-response"),
+    emptyFallback: compileEmptyFallback(config.emptyFallback),
   };
   return { processor, issues };
 }
