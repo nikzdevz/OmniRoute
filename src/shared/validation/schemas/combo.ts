@@ -156,7 +156,7 @@ export const slaRoutingPolicySchema = z
 // body fails this predicate fails over to the next target (same path as an HTTP error).
 export const responseValidationSchema = z
   .object({
-    forbiddenSubstrings: z.array(z.string().min(1).max(500)).max(50).optional(),
+    forbiddenSubstrings: z.array(z.string().min(1).max(500)).max(500).optional(),
     requiredSubstrings: z.array(z.string().min(1).max(500)).max(50).optional(),
     minContentLength: z.coerce.number().int().min(0).max(1_000_000).optional(),
     jsonPathPredicates: z

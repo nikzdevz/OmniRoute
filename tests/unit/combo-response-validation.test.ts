@@ -7,6 +7,9 @@ import {
   extractContentText,
   type ResponseValidationConfig,
 } from "../../open-sse/services/combo/responseValidation.ts";
+import {
+  responseValidationSchema,
+} from "../../src/shared/validation/schemas/combo.ts";
 
 // Feature 4985 — configurable response-body validation predicate.
 
@@ -114,4 +117,19 @@ test("extractContentText handles string, array parts, and Responses API output",
     "resp"
   );
   assert.equal(extractContentText({}), "");
+});
+
+test("responseValidationSchema accepts up to 500 forbiddenSubstrings entries", () => {
+  const fifty = Array.from({ length: 50 }, (_, i) => `bad${String(i).padStart(3, "0")}`);
+  const fiveHundred = Array.from({ length: 500 }, (_, i) => `bad${String(i).padStart(3, "0")}`);
+
+  assert.doesNotThrow(() => responseValidationSchema.parse({ forbiddenSubstrings: fifty }));
+  assert.doesNotThrow(() => responseValidationSchema.parse({ forbiddenSubstrings: fiveHundred }));
+  assert.throws(
+    () =>
+      responseValidationSchema.parse({
+        forbiddenSubstrings: [...fiveHundred, "overflow"],
+      }),
+    { message: /Too big|at most 500/i }
+  );
 });
