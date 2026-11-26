@@ -46,6 +46,13 @@ export const METADATA_KEYS = new Set([
   "event",
   "provider",
   "format",
+  // Metering evidence decorated onto the final usage object
+  // (open-sse/utils/usageEvidence.ts): `usage_evidence` holds one `{source, method}` pair per
+  // metered field, and `estimated` is a boolean flag. Both are metadata; walking them emitted
+  // "reported"/"unknown"/"estimated"/"request_body_heuristic" as answer text.
+  "usage_evidence",
+  "usageEvidence",
+  "cache_evidence",
   // OpenAI Responses API protocol identifiers / opaque blobs (#15507): never user text.
   "call_id",
   "item_id",
@@ -383,6 +390,13 @@ export function createSseTextTransform(
                 obj[key] = processor(val, field, isStopSignal, compositeKey, isSnapshot, fieldName);
                 matched = true;
               } else if (typeof obj[key] === "object") {
+                // A metadata key's value is opaque in every form, not only when it is a
+                // string: `usage` carries `usage_evidence.{input,output}.{source,method}`
+                // and `logprobs` carries per-token `token` text. Walking into them
+                // classified those strings as "content" and emitted them as answer text
+                // (`reportedreportedunknownunknown`, `estimated…observed_characters`), which
+                // a client reads as the reply and an agent reads as its next turn.
+                if (classifyField(key, parentKey) === null) continue;
                 sanitizeObject(obj[key], choiceIdx, toolIdx, isArray ? parentKey : key);
               }
             }
