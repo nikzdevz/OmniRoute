@@ -25,7 +25,7 @@
  *  - The ok policy demotes a model once its consecutive failures exceed a
  *    threshold; demoted models go to the very bottom of the ordering, below
  *    healthy and unknown models, but are never dropped.
- *  - TTL is 180s (a full sweep takes minutes; see LATENCY_TTL_MS). Stale or
+ *  - TTL is 600s (aligned with the 300s sweep cadence; see LATENCY_TTL_MS). Stale or
  *    missing samples fall back to the combo's existing
  *    priority order, so routing never depends on absent data.
  *
@@ -41,24 +41,33 @@ import { isStaleComboAutoPruneEnabled } from "../../src/lib/combos/staleModelPru
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-/** Probe cadence (ms). */
-export const PROBE_INTERVAL_MS = 30_000;
 /**
- * Latency sample freshness window (ms). 180s: a full sweep across every
- * model of every probed combo (277+ unique targets at 12-way concurrency)
- * takes minutes, so a 60s TTL let early-sweep models — the Claude combos
- * sort first alphabetically — go stale before a sweep finished and the
- * dashboard read "no probe yet" for exactly the models operators watch.
+ * Probe cadence (ms).
+ *
+ * 30s sweeps of every probed model were self-inflicted load: 277+ real
+ * 1-token completions per sweep, each passing through the full request
+ * pipeline (SQLite usage/call-log writes, file logging, TLS setup) on the
+ * single Node event loop. On a single-replica deployment this produced
+ * multi-second stalls where every client, including the health endpoint,
+ * waited behind the write burst. 300s keeps latency samples usable while
+ * cutting probe traffic by roughly 10x.
  */
-export const LATENCY_TTL_MS = 180_000;
+export const PROBE_INTERVAL_MS = 300_000;
+/**
+ * Latency sample freshness window (ms). 600s, kept above the 300s sweep
+ * cadence so early-sweep models (the Claude combos sort first alphabetically)
+ * stay usable until the next sweep reaches them. A TTL shorter than the
+ * cadence made samples read stale for part of every cycle.
+ */
+export const LATENCY_TTL_MS = 600_000;
 /**
  * Max concurrent probes per tick (bounded).
- *  Bumped 6 → 12 so a sweep of ~277 unique models (speed-combo + responsive
- *  priority combos, slow 5-15s Claude/opus TTFBs included) completes well
- *  inside the 180s freshness window. Each probe is one 1-token completion;
- *  12 concurrent tiny requests per provider pool is trivial load.
+ *  Trimmed 12 → 3: twelve simultaneous completions multiplied the burst of
+ *  synchronous persistence that blocks the event loop. Three keeps sweeps
+ *  well inside the freshness window at a fraction of the write pressure.
+ *  Each probe is one 1-token completion.
  */
-export const PROBE_CONCURRENCY = 12;
+export const PROBE_CONCURRENCY = 3;
 /** Per-probe hard timeout (ms) so a hung upstream cannot stall the tick. */
 export const PROBE_TIMEOUT_MS = 15_000;
 /** Timeout (ms) for a model that has failed once consecutively. */
@@ -118,7 +127,7 @@ function createState(): SchedulerState {
  * @param {number} [now] - Override clock (tests).
  * @returns {number} Timeout in ms.
  */
-export function probeTimeoutForModel(modelStr: string, now: number = Date.now()): number {
+export function probeTimeoutForModel(modelStr: string, _now: number = Date.now()): number {
   const failures = getState().consecutiveFailures.get(modelStr) || 0;
   if (failures >= PROBE_TIMEOUT_DEGRADED_AT_FAILURES) return PROBE_TIMEOUT_DEGRADED_MS;
   if (failures >= PROBE_TIMEOUT_FAST_AT_FAILURES) return PROBE_TIMEOUT_FAST_MS;
@@ -133,7 +142,7 @@ export function probeTimeoutForModel(modelStr: string, now: number = Date.now())
  * @param {number} [now] - Override clock (tests).
  * @returns {boolean} true when the model is demoted by the ok policy.
  */
-export function isModelOk(modelStr: string, now: number = Date.now()): boolean {
+export function isModelOk(modelStr: string, _now: number = Date.now()): boolean {
   const failures = getState().consecutiveFailures.get(modelStr) || 0;
   return failures < OK_POLICY_MAX_CONSECUTIVE_FAILURES;
 }

@@ -10,10 +10,9 @@ import {
   probeTimeoutForModel,
   recordLatencySample,
   PROBE_TIMEOUT_FAST_MS,
-  PROBE_TIMEOUT_FAST_AT_FAILURES,
   PROBE_TIMEOUT_DEGRADED_MS,
-  PROBE_TIMEOUT_DEGRADED_AT_FAILURES,
   PROBE_TIMEOUT_MS,
+  LATENCY_TTL_MS,
   OK_POLICY_MAX_CONSECUTIVE_FAILURES,
 } from "../../../open-sse/services/responsivePriority.ts";
 
@@ -65,7 +64,6 @@ test("orderByLatencyHealth: ok policy demotes over-threshold models", () => {
     recordLatencySample("slow/failing", { latencyMs: 5, ok: false, probedAt: Date.now() });
   }
   // Healthy model has worse raw latency but sorts first; failing model is demoted.
-  const ordered = orderByLatencyHealth(["slow/failing", "fast/ok"]);
   recordLatencySample("fast/ok", { latencyMs: 1000, ok: true, probedAt: Date.now() });
   const ordered2 = orderByLatencyHealth(["slow/failing", "fast/ok"]);
   assert.deepEqual(ordered2, ["fast/ok", "slow/failing"]);
@@ -107,7 +105,11 @@ test("orderByLatencyHealth: ok=false sample sorts last but never dropped", () =>
 test("getLatencyHealth: expired sample returns null", () => {
   clearLatencyHealth();
   const now = 1000;
-  recordLatencySample("openai/gpt-4o", { latencyMs: 100, ok: true, probedAt: now - 190_000 });
+  recordLatencySample("openai/gpt-4o", {
+    latencyMs: 100,
+    ok: true,
+    probedAt: now - (LATENCY_TTL_MS + 10_000),
+  });
   assert.equal(getLatencyHealth("openai/gpt-4o", now), null);
 });
 
@@ -126,7 +128,11 @@ test("snapshot only returns fresh samples", () => {
   clearLatencyHealth();
   const now = 1000;
   recordLatencySample("fresh", { latencyMs: 10, ok: true, probedAt: now - 100 });
-  recordLatencySample("stale", { latencyMs: 10, ok: true, probedAt: now - 190_000 });
+  recordLatencySample("stale", {
+    latencyMs: 10,
+    ok: true,
+    probedAt: now - (LATENCY_TTL_MS + 10_000),
+  });
   const snap = getLatencyHealthSnapshot(now);
   assert.ok("fresh" in snap);
   assert.equal("stale" in snap, false);

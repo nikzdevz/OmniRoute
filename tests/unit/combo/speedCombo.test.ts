@@ -23,6 +23,7 @@ import {
   clearLatencyHealth,
   collectResponsivePriorityModels,
   recordLatencySample,
+  LATENCY_TTL_MS,
 } from "../../../open-sse/services/responsivePriority.ts";
 import {
   recordQualityEvent,
@@ -55,7 +56,10 @@ test("cold cache: no probe and no traffic keeps the operator-declared order", ()
   resetStores();
   const targets = [target("p/a"), target("p/b"), target("p/c")];
   const ordered = orderBySpeedHealth(targets, NOW);
-  assert.deepEqual(ordered.map((t) => t.modelStr), ["p/a", "p/b", "p/c"]);
+  assert.deepEqual(
+    ordered.map((t) => t.modelStr),
+    ["p/a", "p/b", "p/c"]
+  );
   for (const t of targets) {
     assert.equal(evaluateSpeedHealth(t, NOW).bucket, 1);
   }
@@ -67,7 +71,10 @@ test("fresh ok probes reorder ascending by latency; unknown stays behind scored 
   recordLatencySample("p/b", { latencyMs: 600, ok: true, probedAt: NOW });
   const targets = [target("p/c"), target("p/a"), target("p/b")];
   const ordered = orderBySpeedHealth(targets, NOW);
-  assert.deepEqual(ordered.map((t) => t.modelStr), ["p/a", "p/b", "p/c"]);
+  assert.deepEqual(
+    ordered.map((t) => t.modelStr),
+    ["p/a", "p/b", "p/c"]
+  );
 });
 
 test("failed probe demotes below unknown targets, never dropped", () => {
@@ -76,7 +83,10 @@ test("failed probe demotes below unknown targets, never dropped", () => {
   recordLatencySample("p/c", { latencyMs: 0, ok: false, probedAt: NOW });
   const targets = [target("p/c"), target("p/b"), target("p/a")];
   const ordered = orderBySpeedHealth(targets, NOW);
-  assert.deepEqual(ordered.map((t) => t.modelStr), ["p/a", "p/b", "p/c"]);
+  assert.deepEqual(
+    ordered.map((t) => t.modelStr),
+    ["p/a", "p/b", "p/c"]
+  );
   const demoted = evaluateSpeedHealth(target("p/c"), NOW);
   assert.equal(demoted.bucket, 2);
   assert.equal(demoted.hardDemotionReason, "probe_failed");
@@ -165,16 +175,17 @@ test("orderBySpeedHealth is a pure permutation of its input", () => {
   recordLatencySample("p/c", { latencyMs: 0, ok: false, probedAt: NOW });
   const targets = [target("p/a"), target("p/b"), target("p/c")];
   const ordered = orderBySpeedHealth(targets, NOW);
-  assert.deepEqual(
-    ordered.map((t) => t.modelStr).sort(),
-    targets.map((t) => t.modelStr).sort()
-  );
+  assert.deepEqual(ordered.map((t) => t.modelStr).sort(), targets.map((t) => t.modelStr).sort());
   assert.equal(ordered.length, targets.length);
 });
 
-test("stale probe (older than the 180s TTL) reads as unknown, not scored", () => {
+test("stale probe (older than the latency TTL) reads as unknown, not scored", () => {
   resetStores();
-  recordLatencySample("p/a", { latencyMs: 300, ok: true, probedAt: NOW - 300_000 });
+  recordLatencySample("p/a", {
+    latencyMs: 300,
+    ok: true,
+    probedAt: NOW - (LATENCY_TTL_MS + 60_000),
+  });
   const entry = evaluateSpeedHealth(target("p/a"), NOW);
   assert.equal(entry.bucket, 1);
   assert.equal(entry.probeLatencyMs, null);
@@ -197,7 +208,11 @@ test("getSpeedHealthSnapshot returns ranked entries with fused scores", () => {
 test("probe scheduler collects speed-combo models alongside responsive-priority", () => {
   const combos = [
     { name: "rp", strategy: "responsive-priority", models: ["prov/m1"] },
-    { name: "sc", strategy: "speed-combo", models: ["prov/m2", { kind: "model", model: "prov/m3" }] },
+    {
+      name: "sc",
+      strategy: "speed-combo",
+      models: ["prov/m2", { kind: "model", model: "prov/m3" }],
+    },
     { name: "other", strategy: "priority", models: ["prov/m4"] },
   ];
   const models = collectResponsivePriorityModels(combos);

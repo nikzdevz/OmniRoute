@@ -26,8 +26,8 @@ async function reset() {
 }
 
 test("constants: probe cadence is 30s, TTL 180s, bounded concurrency", () => {
-  assert.equal(PROBE_INTERVAL_MS, 30_000);
-  assert.equal(LATENCY_TTL_MS, 180_000);
+  assert.equal(PROBE_INTERVAL_MS, 300_000);
+  assert.equal(LATENCY_TTL_MS, 600_000);
   assert.ok(PROBE_CONCURRENCY >= 1 && PROBE_CONCURRENCY <= 24);
 });
 
