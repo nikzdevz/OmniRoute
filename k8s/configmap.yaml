@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: omniroute-config
+  namespace: omniroute
+data:
+  # ── Core ──────────────────────────────────────────────────────────
+  PORT: "20128"
+  DASHBOARD_PORT: "20128"
+  # BASE_URL / NEXT_PUBLIC_BASE_URL live in the Secret (domain-specific)
+
+  # ── Storage ───────────────────────────────────────────────────────
+  STORAGE_DRIVER: "sqlite"
+  SQLITE_MAX_SIZE_MB: "2048"
+  DISABLE_SQLITE_AUTO_BACKUP: "false"
+
+  # ── Context management (compression-related) ──────────────────────
+  CONTEXT_LENGTH_DEFAULT: "128000"
+  USAGE_TOKEN_BUFFER: "2000"
+
+  # ── Caches ────────────────────────────────────────────────────────
+  SEMANTIC_CACHE_MAX_SIZE: "100"
+  SEMANTIC_CACHE_MAX_BYTES: "4194304"
+  SEMANTIC_CACHE_TTL_MS: "1800000"
+  PROMPT_CACHE_MAX_SIZE: "50"
+  PROMPT_CACHE_MAX_BYTES: "2097152"
+  PROMPT_CACHE_TTL_MS: "300000"
+
+  # ── Timeouts (REQUEST_TIMEOUT_MS = master) ────────────────────────
+  REQUEST_TIMEOUT_MS: "600000"
+  STREAM_IDLE_TIMEOUT_MS: "600000"
+
+  # ── Rate limits ───────────────────────────────────────────────────
+  RATE_LIMIT_MAX_WAIT_MS: "120000"
+
+  # ── Logging ───────────────────────────────────────────────────────
+  APP_LOG_LEVEL: "info"
+  APP_LOG_FORMAT: "text"
+  APP_LOG_TO_FILE: "false"
+  APP_LOG_RETENTION_DAYS: "7"
+  CALL_LOG_RETENTION_DAYS: "7"
+  CALL_LOG_MAX_ENTRIES: "10000"
+  CALL_LOGS_TABLE_MAX_ROWS: "100000"
+  PROXY_LOGS_TABLE_MAX_ROWS: "100000"
+  STREAM_HISTORY_MAX: "50"
+
+  # ── Sync jobs ─────────────────────────────────────────────────────
+  PRICING_SYNC_ENABLED: "true"
+  PRICING_SYNC_INTERVAL: "86400"
+  PRICING_SYNC_SOURCES: "litellm"
+  MODELS_DEV_SYNC_INTERVAL: "86400"
+  PROVIDER_LIMITS_SYNC_INTERVAL_MINUTES: "70"
+
+  # ── Operational ───────────────────────────────────────────────────
+  OMNIROUTE_MEMORY_MB: "512"
+  OMNIROUTE_HIDE_HEALTHCHECK_LOGS: "true"
+
+  # ── Injection guard / PII ─────────────────────────────────────────
+  INPUT_SANITIZER_ENABLED: "true"
+  INPUT_SANITIZER_MODE: "warn"
+  INJECTION_GUARD_MODE: "warn"
+  PII_REDACTION_ENABLED: "false"
+  PII_RESPONSE_SANITIZATION: "false"
+  PII_RESPONSE_SANITIZATION_MODE: "redact"
+  TOOL_POLICY_MODE: "disabled"
