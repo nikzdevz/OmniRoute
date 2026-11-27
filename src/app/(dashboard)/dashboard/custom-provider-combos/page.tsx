@@ -7,32 +7,29 @@ import Button from "@/shared/components/Button";
 import Icon from "@/shared/components/Icon";
 import Input from "@/shared/components/Input";
 import { matchesSearch } from "@/shared/utils/turkishText";
+import { useNotificationStore } from "@/store/notificationStore";
 
-interface ProviderNode {
-  id: string;
-  name?: string;
-  prefix?: string;
-  type?: string;
+interface ProviderOption {
+  providerId: string;
+  displayName: string;
+  prefix?: string | null;
+  source: string;
+  models: Array<{
+    id: string;
+    name: string;
+    qualifiedModel: string;
+  }>;
 }
 
-interface Combo {
+interface ComboOption {
   id: string;
   name: string;
-  models?: any[];
-}
-
-interface ModelRow {
-  providerId: string;
-  providerName: string;
-  modelId: string;
-  qualified: string;
 }
 
 export default function CustomProviderCombosPage() {
   const notify = useNotificationStore();
-  const [nodes, setNodes] = useState<ProviderNode[]>([]);
-  const [combos, setCombos] = useState<Combo[]>([]);
-  const [models, setModels] = useState<ModelRow[]>([]);
+  const [providers, setProviders] = useState<ProviderOption[]>([]);
+  const [combos, setCombos] = useState<ComboOption[]>([]);
   const [selection, setSelection] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -41,48 +38,29 @@ export default function CustomProviderCombosPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [nodesRes, combosRes] = await Promise.all([
-        fetch("/api/provider-nodes"),
-        fetch("/api/combos"),
-      ]);
-      const nodesData = nodesRes.ok ? await nodesRes.json() : { nodes: [] };
-      const combosData = combosRes.ok ? await combosRes.json() : { combos: [] };
-      const fetchedNodes: ProviderNode[] = nodesData.nodes || nodesData || [];
-      setNodes(fetchedNodes);
-      const fetchedCombos: Combo[] = combosData.combos || combosData || [];
-      setCombos(fetchedCombos);
-
-      // fetch models for each node
-      const allModels: ModelRow[] = [];
-      await Promise.all(
-        fetchedNodes.map(async (node) => {
-          try {
-            const res = await fetch(`/api/providers/${node.id}/models`);
-            if (!res.ok) return;
-            const data = await res.json();
-            const list = Array.isArray(data) ? data : data.models || data.data || [];
-            list.forEach((m: any) => {
-              const id = m.id || m.name || m.model;
-              if (!id) return;
-              allModels.push({
-                providerId: node.id,
-                providerName: node.name || node.prefix || node.id,
-                modelId: id,
-                qualified: `${node.prefix || node.id}/${id}`,
-              });
-            });
-          } catch {
-            // ignore
-          }
-        })
+      const res = await fetch("/api/combos/builder/options");
+      if (!res.ok) throw new Error("Failed to fetch builder options");
+      const data = await res.json();
+      
+      const allProviders: ProviderOption[] = data.providers || [];
+      // Filter for custom providers (provider-node source)
+      const customOnes = allProviders.filter(
+        (p) => p.source === "provider-node" || p.providerId.includes("compatible")
       );
-      setModels(allModels);
+      setProviders(customOnes);
+
+      const allCombos: ComboOption[] = (data.comboRefs || []).map((c: any) => ({
+        id: c.id,
+        name: c.name,
+      }));
+      setCombos(allCombos);
     } catch (e) {
       console.error(e);
+      notify.error("Failed to load custom providers and combos");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [notify]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -92,28 +70,55 @@ export default function CustomProviderCombosPage() {
   const save = async () => {
     setSaving(true);
     try {
-      // group selected by combo
+      // Map combo -> qualified models
       const byCombo: Record<string, string[]> = {};
-      Object.entries(selection).forEach(([qualified, combos]) => {
-        combos.forEach((c) => {
+      Object.entries(selection).forEach(([qualified, targetCombos]) => {
+        targetCombos.forEach((c) => {
           if (!byCombo[c]) byCombo[c] = [];
           byCombo[c].push(qualified);
         });
       });
+
+      let updatedCount = 0;
       for (const [comboName, modelQuals] of Object.entries(byCombo)) {
+        if (!modelQuals.length) continue;
         const combo = combos.find((c) => c.name === comboName);
         if (!combo) continue;
-        const existing = (combo.models || []).map((m: any) =>
-          typeof m === "string" ? m : m.model || m
+
+        // Fetch current combo to merge models
+        const res = await fetch(`/api/combos/${encodeURIComponent(combo.id)}`);
+        if (!res.ok) continue;
+        const currentData = await res.json();
+        const existingSteps = currentData.models || [];
+        const existingQuals = new Set(
+          existingSteps.map((s: any) => (typeof s === "string" ? s : s.model))
         );
-        const merged = Array.from(new Set([...existing, ...modelQuals]));
-        await fetch(`/api/combos/${combo.id}`, {
+
+        const newSteps = [...existingSteps];
+        for (const q of modelQuals) {
+          if (!existingQuals.has(q)) {
+            newSteps.push({
+              kind: "model",
+              model: q,
+              weight: 0,
+            });
+            existingQuals.add(q);
+          }
+        }
+
+        const updateRes = await fetch(`/api/combos/${encodeURIComponent(combo.id)}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ models: merged.map((m) => ({ model: m, weight: 0 })) }),
+          body: JSON.stringify({ models: newSteps }),
         });
+
+        if (updateRes.ok) {
+          updatedCount++;
+        }
       }
-      notify.success("Assignments saved");
+
+      notify.success(`Assignments saved to ${updatedCount} combo(s)`);
+      setSelection({});
     } catch {
       notify.error("Save failed");
     } finally {
@@ -121,21 +126,20 @@ export default function CustomProviderCombosPage() {
     }
   };
 
-  const filtered = models.filter((m) =>
-    query ? matchesSearch(m.modelId + " " + m.providerName, query) : true
-  );
-
-  // group by provider
-  const groups: Record<string, ModelRow[]> = {};
-  filtered.forEach((m) => {
-    if (!groups[m.providerId]) groups[m.providerId] = [];
-    groups[m.providerId].push(m);
-  });
+  const filteredProviders = providers
+    .map((p) => {
+      const matchesProvider = query ? matchesSearch(p.displayName + " " + p.providerId, query) : true;
+      const matchedModels = p.models.filter((m) =>
+        query ? matchesProvider || matchesSearch(m.name + " " + m.id, query) : true
+      );
+      return { ...p, models: matchedModels };
+    })
+    .filter((p) => p.models.length > 0);
 
   return (
     <div className="flex flex-col gap-4 p-4">
       <PageHeader compact title="Custom Provider Models → Combos" />
-      <Card title="Fetch & assign" subtitle="Pick combos per model from your self-added providers">
+      <Card title="Fetch & Assign" subtitle="Add models from your custom providers into combos">
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-2">
             <Input
@@ -144,64 +148,63 @@ export default function CustomProviderCombosPage() {
               onChange={(e) => setQuery(e.target.value)}
             />
             <Button variant="outline" onClick={fetchData} disabled={loading}>
-              <Icon name="refresh" size={14} /> Fetch all models
+              <Icon name="refresh" size={14} /> Refresh
             </Button>
             <Button variant="primary" loading={saving} onClick={save}>
               Save assignments
             </Button>
           </div>
 
-          {loading && <p className="text-xs text-text-muted">Loading…</p>}
+          {loading && <p className="text-xs text-text-muted">Loading providers and models…</p>}
 
-          {Object.entries(groups).map(([pid, rows]) => {
-            const node = nodes.find((n) => n.id === pid);
-            return (
-              <div key={pid} className="rounded-md border">
-                <div className="flex items-center justify-between bg-bg-subtle px-3 py-2">
-                  <span className="font-medium text-sm">{node?.name || pid}</span>
-                  <span className="text-xs text-text-muted">{rows.length} models</span>
-                </div>
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border text-xs text-text-muted">
-                      <th className="px-3 py-2 text-left">Model</th>
-                      <th className="px-3 py-2 text-left">Combos</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((m) => (
-                      <tr key={m.qualified} className="border-b border-border last:border-0">
-                        <td className="px-3 py-2 font-mono text-xs">{m.modelId}</td>
-                        <td className="px-3 py-2">
-<select
-                            multiple
-                            value={selection[m.qualified] || []}
-                            onChange={(e) => {
-                              const opts = Array.from(e.target.selectedOptions).map(
-                                (o) => o.value
-                              );
-                              setSelection((prev) => ({ ...prev, [m.qualified]: opts }));
-                            }}
-                            className="min-w-45 rounded-md border border-border bg-bg-subtle px-2 py-1 text-xs"
-                          >
-                            {combos.map((c) => (
-                              <option key={c.id} value={c.name}>
-                                {c.name}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            );
-          })}
-
-          {!loading && filtered.length === 0 && (
-            <p className="text-xs text-text-muted">No models found. Fetch from your providers.</p>
+          {!loading && filteredProviders.length === 0 && (
+            <p className="text-xs text-text-muted">
+              No custom providers with models found. Check /dashboard/providers to add custom endpoints.
+            </p>
           )}
+
+          {filteredProviders.map((p) => (
+            <div key={p.providerId} className="rounded-md border">
+              <div className="flex items-center justify-between bg-bg-subtle px-3 py-2">
+                <span className="font-medium text-sm">{p.displayName}</span>
+                <span className="text-xs text-text-muted">{p.models.length} models</span>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-xs text-text-muted">
+                    <th className="px-3 py-2 text-left">Model</th>
+                    <th className="px-3 py-2 text-left">Combos</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {p.models.map((m) => (
+                    <tr key={m.qualifiedModel} className="border-b border-border last:border-0">
+                      <td className="px-3 py-2 font-mono text-xs">
+                        {m.name !== m.id ? `${m.name} (${m.id})` : m.id}
+                      </td>
+                      <td className="px-3 py-2">
+                        <select
+                          multiple
+                          value={selection[m.qualifiedModel] || []}
+                          onChange={(e) => {
+                            const opts = Array.from(e.target.selectedOptions).map((o) => o.value);
+                            setSelection((prev) => ({ ...prev, [m.qualifiedModel]: opts }));
+                          }}
+                          className="min-w-45 rounded-md border border-border bg-bg-subtle px-2 py-1 text-xs"
+                        >
+                          {combos.map((c) => (
+                            <option key={c.id} value={c.name}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
         </div>
       </Card>
     </div>
