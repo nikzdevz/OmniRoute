@@ -23,13 +23,16 @@ import Icon from "@/shared/components/Icon";
 import Input from "@/shared/components/Input";
 import { matchesSearch } from "@/shared/utils/turkishText";
 import { useNotificationStore } from "@/store/notificationStore";
+import Collapsible from "@/shared/components/Collapsible";
 import ComboMembershipSelect from "./ComboMembershipSelect";
 import {
   buildComboMembership,
   buildModelIdentity,
+  describeComboError,
+  describeFetchError,
   dirtyKey,
+  planComboUpdates,
   resolveSelectedComboIds,
-  stepMatchesModel,
   type ComboStepEntry,
   type ModelIdentity,
 } from "./comboMembership";
@@ -154,70 +157,52 @@ export default function CustomProviderCombosPage() {
     if (dirtyCount === 0) return;
     setSaving(true);
     try {
+      const plans = planComboUpdates({ combos, identities, dirty });
+      if (plans.length === 0) {
+        notify.error("Nothing to save");
+        await loadAll();
+        return;
+      }
+
       let updatedCombos = 0;
       const failures: string[] = [];
 
-      for (const combo of combos) {
-        let changed = false;
-        const nextIdentities: ModelIdentity[] = [];
-
-        identities.forEach((identity, target) => {
-          if (dirty[dirtyKey(combo.id, target)] !== true) return;
-          const shouldBeIn = selectedComboIds(target).includes(combo.id);
-          if (shouldBeIn) nextIdentities.push(identity);
-          else changed = true;
-        });
-
-        if (!changed && nextIdentities.length === 0) continue;
-
-        // Keep every step this page does not manage, drop the models it was un-ticked
-        // for, then append the newly ticked ones as prefixed model steps.
-        const currentSteps = combo.models ?? [];
-        const retained = currentSteps.filter(
-          (step) =>
-            !identities.some((identity) => stepMatchesModel(step, identity)) ||
-            nextIdentities.some((identity) => stepMatchesModel(step, identity))
-        );
-        const staged =
-          changed || nextIdentities.length > 0
-            ? [
-                ...retained,
-                ...nextIdentities.map((identity) => ({
-                  kind: "model",
-                  model: identity.target,
-                  providerId: identity.providerId,
-                  weight: 0,
-                })),
-              ]
-            : retained;
-
-        if (!changed && staged.length === retained.length) continue;
-
-        const res = await fetch(`/api/combos/${encodeURIComponent(combo.id)}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ models: staged, overrideAllowedProviders: true }),
-        });
-        if (res.ok) {
-          updatedCombos += 1;
-          continue;
+      for (const plan of plans) {
+        const combo = combos.find((candidate) => candidate.id === plan.comboId);
+        try {
+          const res = await fetch(`/api/combos/${encodeURIComponent(plan.comboId)}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ models: plan.models, overrideAllowedProviders: true }),
+          });
+          if (res.ok) {
+            updatedCombos += 1;
+            continue;
+          }
+          failures.push(`${combo?.name ?? plan.comboId}: ${await describeComboError(res)}`);
+        } catch (error) {
+          failures.push(`${combo?.name ?? plan.comboId}: ${describeFetchError(error)}`);
         }
-        const body = await res.json().catch(() => null);
-        failures.push(
-          `${combo.name}: ${
-            typeof body?.error === "string" ? body.error : (body?.firstMessage ?? `HTTP ${res.status}`)
-          }`
-        );
       }
+
+      await loadAll();
 
       if (failures.length > 0) {
-        notify.warning(`Some combos were not updated — ${failures.join(" · ")}`);
+        notify.warning(
+          `${failures.length} combo(s) not updated — ${failures.slice(0, 3).join(" · ")}`
+        );
       }
-      if (updatedCombos > 0) notify.success(`Saved to ${updatedCombos} combo(s)`);
-      else if (failures.length === 0) notify.error("Save failed");
-      await loadAll();
-    } catch {
-      notify.error("Save failed");
+      if (updatedCombos > 0) {
+        const totalAdded = plans.reduce((sum, plan) => sum + plan.added.length, 0);
+        const totalRemoved = plans.reduce((sum, plan) => sum + plan.removed.length, 0);
+        const parts = [
+          totalAdded > 0 ? `${totalAdded} model(s) added` : null,
+          totalRemoved > 0 ? `${totalRemoved} model(s) removed` : null,
+        ].filter(Boolean);
+        notify.success(`Saved to ${updatedCombos} combo(s) — ${parts.join(", ")}`);
+      }
+    } catch (error) {
+      notify.error(`Save failed — ${describeFetchError(error)}`);
     } finally {
       setSaving(false);
     }
@@ -286,16 +271,14 @@ export default function CustomProviderCombosPage() {
           )}
 
           {filteredProviders.map((provider) => (
-            <section
+            <Collapsible
               key={provider.providerId}
-              className="overflow-hidden rounded-md border border-border"
+              icon="dns"
+              title={provider.displayName}
+              subtitle={`${provider.models.length} models · ${
+                provider.prefix ?? provider.providerId
+              }`}
             >
-              <header className="flex flex-wrap items-center justify-between gap-2 bg-bg-subtle px-3 py-2">
-                <span className="text-sm font-medium">{provider.displayName}</span>
-                <span className="text-xs text-text-muted">
-                  {provider.models.length} models · {provider.prefix ?? provider.providerId}
-                </span>
-              </header>
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs text-text-muted">
@@ -325,7 +308,7 @@ export default function CustomProviderCombosPage() {
                   ))}
                 </tbody>
               </table>
-            </section>
+            </Collapsible>
           ))}
 
           {(dirtyCount > 0 || saving) && (
