@@ -233,6 +233,15 @@ const RESPONSE_PROCESSOR_GROUP: SidebarItemGroup = {
       subtitleFallback: "Banned-text rewriting",
       icon: "shield",
     },
+    {
+      id: "custom-provider-combos",
+      href: "/dashboard/custom-provider-combos",
+      i18nKey: "customProviderCombos",
+      labelFallback: "Custom Provider Combos",
+      subtitleKey: "customProviderCombosSubtitle",
+      subtitleFallback: "Assign models to combos",
+      icon: "layers",
+    },
   ],
 };
 
