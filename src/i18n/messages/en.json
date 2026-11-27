@@ -1309,6 +1309,8 @@
     "responseProcessor": "Response Processor",
     "responseProcessorSubtitle": "Banned-text rewriting",
     "responseProcessorGroup": "Response Processing",
+    "customProviderCombos": "Custom Provider Combos",
+    "customProviderCombosSubtitle": "Assign provider models to combos",
     "chaosConfigSubtitle": "Multi-model parallel execution",
     "routingSection": "Routing",
     "protocolsSection": "Protocols",
