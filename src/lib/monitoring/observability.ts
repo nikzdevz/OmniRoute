@@ -6,6 +6,7 @@ import type { AdaptiveAdmissionPublicSnapshot } from "@omniroute/open-sse/servic
 import type { PerConnectionAdmissionController } from "@/shared/middleware/chatBodyAdmission";
 import type { WalMaintenanceState } from "@/lib/db/walMaintenance";
 import { getKeyStoreDecryptable } from "@/lib/db/encryption";
+import { getLogCounters } from "@/lib/logCounters";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -216,6 +217,27 @@ export type EventLoopStallSummary = {
   count: number;
   maxMs: number;
 };
+
+/** Read cgroup memory.current (bytes) if available. Returns null on non-container or read failure. */
+function readCgroupMemoryCurrent(): number | null {
+  try {
+    const fs = require("fs");
+    const paths = [
+      "/sys/fs/cgroup/memory.current",
+      "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+    ];
+    for (const path of paths) {
+      if (fs.existsSync(path)) {
+        const content = fs.readFileSync(path, "utf8").trim();
+        const value = parseInt(content, 10);
+        if (Number.isFinite(value)) return value;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
 
 interface BuildHealthPayloadOptions {
   appVersion: string;
@@ -498,6 +520,8 @@ export function buildHealthPayload({
   buildSha = null,
 }: BuildHealthPayloadOptions) {
   const timestamp = new Date().toISOString();
+  const memUsage = process.memoryUsage();
+  const cgroupCurrent = readCgroupMemoryCurrent();
   const system = {
     version: appVersion,
     // #10427: identifying a bad deploy previously required SSH + grepping compiled chunks.
@@ -505,7 +529,16 @@ export function buildHealthPayload({
     ...(buildSha ? { buildSha } : {}),
     nodeVersion: process.version,
     uptime: process.uptime(),
-    memoryUsage: process.memoryUsage(),
+    memoryUsage: {
+      rss: memUsage.rss,
+      heapTotal: memUsage.heapTotal,
+      heapUsed: memUsage.heapUsed,
+      external: memUsage.external,
+      arrayBuffers: memUsage.arrayBuffers,
+      rssMb: Math.round(memUsage.rss / 1024 / 1024 * 10) / 10,
+      heapUsedMb: Math.round(memUsage.heapUsed / 1024 / 1024 * 10) / 10,
+      heapTotalMb: Math.round(memUsage.heapTotal / 1024 / 1024 * 10) / 10,
+    },
     pid: process.pid,
     platform: process.platform,
   };
@@ -570,6 +603,9 @@ export function buildHealthPayload({
     version: system.version,
     uptime: system.uptime,
     memoryUsage: system.memoryUsage,
+    cgroupMemoryCurrent: cgroupCurrent,
+    cgroupMemoryCurrentMb: cgroupCurrent ? Math.round(cgroupCurrent / 1024 / 1024 * 10) / 10 : null,
+    logCounters: getLogCounters(),
     activeConnections: connections.length,
     circuitBreakers: {
       ...breakerCounts,

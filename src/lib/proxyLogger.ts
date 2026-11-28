@@ -251,6 +251,12 @@ export function logProxyEvent(entry: ProxyLogInput) {
   // Structured egress line so the operator can confirm, in the proxy logs, which
   // IP each account is entering (clientIp) and leaving (egressIp) by.
   if (log.proxy || log.egressIp) {
+    // Per P1.7: count error statuses instead of logging every occurrence
+    if (log.status === "error") {
+      import("@/lib/logCounters").then(({ incrementLogCounter, LogCounterKeys }) =>
+        incrementLogCounter(LogCounterKeys.PROXY_EGRESS_ERROR)
+      );
+    }
     console.log(
       formatProxyEgressConsoleLine({
         provider: log.provider,

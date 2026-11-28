@@ -130,6 +130,11 @@ export const MAX_COMBO_DEPTH = 3;
 export const MAX_COMBO_DEPTH_HARD_CAP = 10;
 export const MAX_FALLBACK_WAIT_MS = 5000;
 export const MAX_GLOBAL_ATTEMPTS = 30;
+// Maximum number of model targets (fan-out) per combo request.
+// A single user request should not expand to 30+ upstream attempts.
+// Default 6, operator can lower via config.maxModelsPerRequest, hard cap 10.
+export const MAX_MODELS_PER_REQUEST = 6;
+export const MAX_MODELS_PER_REQUEST_HARD_CAP = 10;
 // Absolute safety ceiling for the operator-configured shared attempt budget
 // (#11134). config.maxGlobalAttempts can raise the default (30) or lower it,
 // but never above this cap — an unbounded attempt budget is the same runaway
@@ -169,6 +174,17 @@ export function clampComboDepth(value: unknown): number {
   const n = Math.floor(Number(value));
   if (!Number.isFinite(n) || n < 1) return MAX_COMBO_DEPTH;
   return Math.min(n, MAX_COMBO_DEPTH_HARD_CAP);
+}
+
+/**
+ * Clamp an operator-configured per-request model cap (config.maxModelsPerRequest)
+ * to a safe integer in [1, MAX_MODELS_PER_REQUEST_HARD_CAP]. Falls back to
+ * MAX_MODELS_PER_REQUEST so a bad config never expands or removes the cap.
+ */
+export function clampMaxModelsPerRequest(value: unknown): number {
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n) || n < 1) return MAX_MODELS_PER_REQUEST;
+  return Math.min(n, MAX_MODELS_PER_REQUEST_HARD_CAP);
 }
 
 /**

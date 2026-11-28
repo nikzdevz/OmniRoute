@@ -135,6 +135,11 @@ const DEFAULT_COMBO_CONFIG = {
   // a dead pool nor raise it for large combos. Clamped by clampGlobalAttempts to
   // [1, MAX_GLOBAL_ATTEMPTS_HARD_CAP] at every read site.
   maxGlobalAttempts: 30,
+  // P1.5: cap the number of model targets considered per combo request.
+  // Prevents a single user request from expanding to 31+ upstream attempts
+  // (across providers in auto-combo), causing excess CPU/memory/disk pressure.
+  // Default 6, operator can raise via config.maxModelsPerRequest, hard cap 10.
+  maxModelsPerRequest: 6,
   nestedComboMode: "flatten",
   trackMetrics: true,
   reasoningTokenBufferEnabled: true,

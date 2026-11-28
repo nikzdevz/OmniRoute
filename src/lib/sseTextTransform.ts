@@ -445,9 +445,9 @@ export function createSseTextTransform(
           if (!matched) {
             // Normal state for control-only chunks (closing frame, usage-only frame): not a
             // sanitizer fault, so keep it out of the warn level (#18047).
-            console.debug(
-              "[SSE-TRANSFORM] No string fields sanitized in SSE JSON chunk. Keys:",
-              Object.keys(json).slice(0, 5).join(", ")
+            // Per P1.7: convert per-chunk debug log to counter to reduce log volume.
+            import("@/lib/logCounters").then(({ incrementLogCounter, LogCounterKeys }) =>
+              incrementLogCounter(LogCounterKeys.SSE_TRANSFORM_NO_SANITIZE)
             );
           } else {
             lastContentJson = json;
